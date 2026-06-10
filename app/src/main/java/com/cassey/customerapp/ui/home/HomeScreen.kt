@@ -308,7 +308,7 @@ fun HomeScreen() {
 
     // Get the coordinates of the pickup and dropoff points
     fun updateTripDetails(pickupLat: Double, pickupLng: Double, dropoffLat: Double, dropoffLng: Double) {
-        // 🔒 LOCK: If there's an active booking, preserve the stored values!
+        // If there's an active booking, preserve the stored values!
         if (bookingStatus != null || activeBookingId != null) return
 
         if (pickupLat != 0.0 && pickupLng != 0.0 && dropoffLat != 0.0 && dropoffLng != 0.0) {
