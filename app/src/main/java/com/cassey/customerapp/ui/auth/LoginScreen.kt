@@ -1,7 +1,10 @@
 package com.cassey.customerapp.ui.auth
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -14,6 +17,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import com.cassey.customerapp.data.SupabaseClient
 import io.github.jan.supabase.auth.OtpType
 import io.github.jan.supabase.auth.providers.builtin.OTP
@@ -31,6 +40,18 @@ data class Profile(
     val created_at: String? = null
 )
 
+private fun getFriendlyErrorMessage(rawError: String): String {
+    val lower = rawError.lowercase()
+    return when {
+        lower.contains("invalid") && lower.contains("credential") -> "The OTP code you entered is incorrect."
+        lower.contains("otp") && lower.contains("expired") -> "Your OTP code has expired."
+        lower.contains("network") || lower.contains("timeout") -> "Connection issue. Check your internet."
+        lower.contains("rate limit") || lower.contains("too many requests") -> "Too many attempts. Try again later."
+        lower.contains("bad request") || lower.contains("format") -> "Please check your phone number format."
+        else -> "An authentication anomaly occurred. Please retry."
+    }
+}
+
 @Composable
 fun LoginScreen(
     onLoginSuccess: () -> Unit
@@ -39,6 +60,7 @@ fun LoginScreen(
     var step by remember { mutableStateOf("PHONE") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+
     var phone by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
     var otp by remember { mutableStateOf("") }
@@ -46,201 +68,392 @@ fun LoginScreen(
     val formattedPhone = phone.filter { it.isDigit() }.let {
         when {
             it.startsWith("0") -> "+63${it.drop(1)}"
-            it.startsWith("63") -> "+$it"
             else -> "+63$it"
         }
     }
 
-    Column(
+    fun sendSupabaseOtp(onSuccess: () -> Unit) {
+        scope.launch {
+            try {
+                SupabaseClient.client.auth.signInWith(OTP) {
+                    this.phone = formattedPhone
+                }
+                onSuccess()
+            } catch (e: Exception) {
+                error = e.message
+            } finally {
+                loading = false
+            }
+        }
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF00B14F))
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+            .background(Color(0xFFF9FAFB))
     ) {
-
-        Text(
-            "Ride&Go",
-            fontSize = 32.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.White
-        )
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        Card(
-            shape = RoundedCornerShape(20.dp),
-            modifier = Modifier.fillMaxWidth()
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(240.dp)
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xFF00A348),
+                            Color(0xFF00C257)
+                        )
+                    )
+                )
+                .padding(horizontal = 24.dp, vertical = 40.dp),
+            contentAlignment = Alignment.TopCenter
         ) {
-            Column(modifier = Modifier.padding(20.dp)) {
+            Column {
+                Spacer(modifier = Modifier.height(48.dp))
 
-                error?.let {
-                    Text(it, color = Color.Red)
-                    Spacer(modifier = Modifier.height(10.dp))
-                }
-
-                AnimatedVisibility(step == "PHONE") {
-                    Column {
-                        OutlinedTextField(
-                            value = phone,
-                            onValueChange = { phone = it },
-                            label = { Text("Phone Number") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                            modifier = Modifier.fillMaxWidth()
+                Text(
+                    text = "Ride&Go",
+                    fontSize = 64.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White,
+                    letterSpacing = (-1.0).sp,
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(
+                            includeFontPadding = false
                         )
+                    )
+                )
 
-                        Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
-                        Button(
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                scope.launch {
-                                    loading = true
+                Text(
+                    text = "Move with ease",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = Color.White.copy(alpha = 0.9f),
+                    letterSpacing = 0.2.sp,
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(
+                            includeFontPadding = false
+                        )
+                    )
+                )
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Smooth offset spacing to separate the text from overlaying the card elements
+            Spacer(modifier = Modifier.height(90.dp))
+
+            // Premium Action Card Panel
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.White, RoundedCornerShape(24.dp))
+                    .border(1.dp, Color(0xFFE5E7EB), RoundedCornerShape(24.dp))
+                    .padding(24.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = when(step) {
+                                    "PHONE" -> "Welcome Back"
+                                    "SIGNUP" -> "Create Account"
+                                    else -> "Verify Identity"
+                                },
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF111827)
+                            )
+                            Text(
+                                text = when(step) {
+                                    "PHONE" -> "Enter your mobile number to begin."
+                                    "SIGNUP" -> "Tell us your legal full name."
+                                    else -> "Enter the code sent to your phone."
+                                },
+                                fontSize = 13.sp,
+                                color = Color(0xFF6B7280)
+                            )
+                        }
+
+                        if (step != "PHONE") {
+                            IconButton(
+                                onClick = {
                                     error = null
-
-                                    try {
-                                        val profile = SupabaseClient.client
-                                            .postgrest["profiles"]
-                                            .select {
-                                                filter { eq("phone_number", formattedPhone) }
-                                            }
-                                            .decodeSingleOrNull<Profile>()
-
-                                        if (profile == null) {
-                                            // Dont send OTP yet we need their name first
-                                            step = "SIGNUP"
-                                        } else {
-                                            // Profile exists Send OTP and go to verification
-                                            SupabaseClient.client.auth.signInWith(OTP) {
-                                                this.phone = formattedPhone
-                                            }
-                                            step = "OTP"
-                                        }
-
-                                    } catch (e: Exception) {
-                                        error = e.message
-                                    }
-
-                                    loading = false
-                                }
+                                    step = "PHONE"
+                                    otp = ""
+                                },
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .background(Color(0xFFF3F4F6), RoundedCornerShape(12.dp))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Navigate Back",
+                                    tint = Color(0xFF374151),
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
-                        ) {
-                            Text(if (loading) "Loading..." else "Continue")
                         }
                     }
-                }
 
-                // SIGNUP STEP
-                AnimatedVisibility(step == "SIGNUP") {
-                    Column {
-                        OutlinedTextField(
-                            value = name,
-                            onValueChange = { name = it },
-                            label = { Text("Full Name") },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
+                    error?.let { rawErrorString ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color(0xFFFEF2F2), RoundedCornerShape(12.dp))
+                                .border(1.dp, Color(0xFFFEE2E2), RoundedCornerShape(12.dp))
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ErrorOutline,
+                                contentDescription = "Error",
+                                tint = Color(0xFFEF4444),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = com.cassey.customerapp.ui.auth.getFriendlyErrorMessage(
+                                    rawErrorString
+                                ),
+                                color = Color(0xFF991B1B),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                         Spacer(modifier = Modifier.height(16.dp))
+                    }
 
-                        Button(
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                scope.launch {
-                                    loading = true
-                                    error = null
-
-                                    try {
-                                        SupabaseClient.client.auth.signInWith(OTP) {
-                                            this.phone = formattedPhone
-                                        }
-                                        // Move to OTP screen
-                                        step = "OTP"
-
-                                    } catch (e: Exception) {
-                                        error = e.message
+                    AnimatedVisibility(
+                        visible = (step == "PHONE"),
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
+                        Column {
+                            OutlinedTextField(
+                                value = phone,
+                                onValueChange = { input ->
+                                    val digits = input.filter { it.isDigit() }
+                                    if (digits.length <= 11) {
+                                        phone = digits
                                     }
+                                    if (error != null) error = null
+                                },
+                                label = { Text("Mobile Phone Number") },
+                                placeholder = { Text("09XXXXXXXXX") },
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    // Add these two lines for the text color:
+                                    focusedTextColor = Color.Black,
+                                    unfocusedTextColor = Color.Black,
 
-                                    loading = false
+                                    // Your existing color configurations:
+                                    focusedBorderColor = Color(0xFF00B14F),
+                                    focusedLabelColor = Color(0xFF00B14F),
+                                    unfocusedBorderColor = Color(0xFFE5E7EB)
+                                ),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(20.dp))
+                            Button(
+                                modifier = Modifier.fillMaxWidth().height(52.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00B14F)),
+                                enabled = (phone.length == 11 && phone.startsWith("09") && !loading),
+                                onClick = {
+                                    scope.launch {
+                                        loading = true
+                                        error = null
+                                        try {
+                                            val profile = SupabaseClient.client
+                                                .postgrest["profiles"]
+                                                .select { filter { eq("phone_number", formattedPhone) } }
+                                                .decodeSingleOrNull<com.cassey.customerapp.ui.auth.Profile>()
+
+                                            if (profile == null) {
+                                                step = "SIGNUP"
+                                                loading = false
+                                            } else {
+                                                sendSupabaseOtp { step = "OTP" }
+                                            }
+                                        } catch (e: Exception) {
+                                            error = e.message
+                                            loading = false
+                                        }
+                                    }
+                                }
+                            ) {
+                                if (loading) {
+                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                                } else {
+                                    Text("Continue Session", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                 }
                             }
-                        ) {
-                            Text(if (loading) "Loading..." else "Sign Up")
                         }
                     }
-                }
 
-                // OTP STEP
-                AnimatedVisibility(step == "OTP") {
-                    Column {
-                        OutlinedTextField(
-                            value = otp,
-                            onValueChange = { otp = it },
-                            label = { Text("OTP Code") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Button(
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                scope.launch {
+                    AnimatedVisibility(
+                        visible = (step == "SIGNUP"),
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
+                        Column {
+                            OutlinedTextField(
+                                value = name,
+                                onValueChange = {
+                                    name = it
+                                    if (error != null) error = null
+                                },
+                                label = { Text("Full Name") },
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color(0xFF00B14F),
+                                    focusedLabelColor = Color(0xFF00B14F),
+                                    unfocusedBorderColor = Color(0xFFE5E7EB)
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(20.dp))
+                            Button(
+                                modifier = Modifier.fillMaxWidth().height(52.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00B14F)),
+                                enabled = (name.trim().isNotEmpty() && !loading),
+                                onClick = {
                                     loading = true
                                     error = null
-
-                                    try {
-                                        SupabaseClient.client.auth.verifyPhoneOtp(
-                                            type = OtpType.Phone.SMS,
-                                            phone = formattedPhone,
-                                            token = otp
-                                        )
-
-                                        if (name.isNotEmpty()) {
-                                            val currentUser = SupabaseClient.client.auth.currentUserOrNull()
-
-                                            if (currentUser != null) {
-                                                SupabaseClient.client.postgrest["profiles"].insert(
-                                                    mapOf(
-                                                        "id" to currentUser.id,
-                                                        "name" to name,
-                                                        "phone_number" to formattedPhone,
-                                                        "role" to "customer"
-                                                    )
-                                                )
-                                            }
-                                        }
-
-                                        onLoginSuccess()
-
-                                    } catch (e: Exception) {
-                                        error = e.message
-                                    }
-
-                                    loading = false
+                                    sendSupabaseOtp { step = "OTP" }
+                                }
+                            ) {
+                                if (loading) {
+                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                                } else {
+                                    Text("Register Profile", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                 }
                             }
-                        ) {
-                            Text(if (loading) "Verifying..." else "Verify OTP")
                         }
+                    }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                    AnimatedVisibility(
+                        visible = (step == "OTP"),
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
+                        Column {
+                            OutlinedTextField(
+                                value = otp,
+                                onValueChange = {
+                                    otp = it.filter { digit -> digit.isDigit() }
+                                    if (error != null) error = null
+                                },
+                                label = { Text("6-Digit Code") },
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.Black,
+                                    unfocusedTextColor = Color.Black,
 
-                        TextButton(
-                            onClick = {
-                                scope.launch {
-                                    SupabaseClient.client.auth.signInWith(OTP) {
-                                        this.phone = formattedPhone
+                                    focusedBorderColor = Color(0xFF00B14F),
+                                    focusedLabelColor = Color(0xFF00B14F),
+                                    unfocusedBorderColor = Color(0xFFE5E7EB)
+                                ),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(20.dp))
+                            Button(
+                                modifier = Modifier.fillMaxWidth().height(52.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00B14F)),
+                                enabled = (otp.isNotEmpty() && !loading),
+                                onClick = {
+                                    scope.launch {
+                                        loading = true
+                                        error = null
+                                        try {
+                                            SupabaseClient.client.auth.verifyPhoneOtp(
+                                                type = OtpType.Phone.SMS,
+                                                phone = formattedPhone,
+                                                token = otp
+                                            )
+                                            handleDatabaseAndFinish(name, formattedPhone, onLoginSuccess)
+                                        } catch (e: Exception) {
+                                            error = e.message
+                                        } finally {
+                                            loading = false
+                                        }
                                     }
                                 }
+                            ) {
+                                if (loading) {
+                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                                } else {
+                                    Text("Verify Identity", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                }
                             }
-                        ) {
-                            Text("Resend OTP")
+
+                            Spacer(modifier = Modifier.height(16.dp))
+                            TextButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    loading = true
+                                    sendSupabaseOtp { error = "Verification code resent." }
+                                }
+                            ) {
+                                Text("Resend Verification Code", color = Color(0xFF00B14F), fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+private suspend fun handleDatabaseAndFinish(
+    name: String,
+    formattedPhone: String,
+    onLoginSuccess: () -> Unit
+) {
+    val currentUser = SupabaseClient.client.auth.currentUserOrNull()
+    if (currentUser != null) {
+        try {
+            if (name.isNotEmpty()) {
+                SupabaseClient.client.postgrest["profiles"].insert(
+                    mapOf(
+                        "id" to currentUser.id,
+                        "name" to name,
+                        "phone_number" to formattedPhone,
+                        "role" to "rider"
+                    )
+                )
+            } else {
+                SupabaseClient.client.postgrest["profiles"].upsert(
+                    mapOf(
+                        "id" to currentUser.id,
+                        "phone_number" to formattedPhone,
+                        "role" to "rider"
+                    )
+                ) {
+                    onConflict = "id"
+                }
+            }
+            onLoginSuccess()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            onLoginSuccess()
         }
     }
 }
