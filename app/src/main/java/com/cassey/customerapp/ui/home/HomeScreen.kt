@@ -53,6 +53,7 @@ import java.util.Locale
 import kotlinx.coroutines.isActive
 import kotlin.math.ceil
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.query.Order
 import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.sin
@@ -79,12 +80,13 @@ data class PlaceSuggestion(
 
 @Serializable
 data class BookingStatusUpdate(
+    val id: String,
     @SerialName("customer_id") val customer_id: String,
     @SerialName("status") val status: String,
     @SerialName("rider_id") val rider_id: String? = null
 )
 
-@kotlinx.serialization.Serializable
+@Serializable
 data class RiderProfile(
     val id: String,
     val name: String,
@@ -115,6 +117,9 @@ fun HomeScreen() {
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+    val isoTimestamp = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+        timeZone = java.util.TimeZone.getTimeZone("UTC")
+    }.format(java.util.Date())
 
     // Initialize MapLibre Engine Instance
     remember { MapLibre.getInstance(context) }
@@ -652,13 +657,15 @@ fun HomeScreen() {
 
     // Updated every 5sec for the status in bookings (it stay even when the app closed)
     LaunchedEffect(activeBookingId) {
-        val currentId = activeBookingId ?: return@LaunchedEffect
-
+        val currentBookingId = activeBookingId ?: return@LaunchedEffect
         while (isActive) {
             try {
                 val updatedBooking = SupabaseClient.client.from("bookings")
-                    .select { filter { eq("customer_id", currentId) } }
-                    .decodeSingleOrNull<BookingStatusUpdate>()
+                    .select {
+                        filter {
+                            eq("id", currentBookingId)
+                        }
+                    }.decodeSingleOrNull<BookingStatusUpdate>()
 
 
                 if (updatedBooking != null) {
@@ -668,7 +675,7 @@ fun HomeScreen() {
                         fetchDriverDetails(updatedBooking.rider_id)
                     }
 
-                    // 🏁 BRANCH A: Driver marked it completed/cancelled from their end
+                    // Driver marked it completed/cancelled from their end
                     if (updatedBooking.status in listOf("completed", "cancelled")) {
 
                         withContext(Dispatchers.Main) {
@@ -1067,10 +1074,14 @@ fun HomeScreen() {
                                                 onClick = {
                                                     scope.launch {
                                                         try {
-                                                            val currentUserId = SupabaseClient.client.auth.currentUserOrNull()?.id
-                                                            if (currentUserId != null) {
+                                                            val currentBookingId = activeBookingId
+
+                                                            if (!currentBookingId.isNullOrEmpty()) {
                                                                 SupabaseClient.client.from("bookings").delete {
-                                                                    filter { eq("customer_id", currentUserId) }
+                                                                    filter {
+                                                                        eq("id", currentBookingId)
+                                                                        eq("status", "pending")
+                                                                    }
                                                                 }
                                                             }
                                                         } catch (e: Exception) {
@@ -1182,8 +1193,15 @@ fun HomeScreen() {
                                                     onClick = {
                                                         scope.launch {
                                                             try {
-                                                                SupabaseClient.client.from("bookings").delete {
-                                                                    filter { eq("customer_id", activeBookingId!!) }
+                                                                activeBookingId?.let { bookingId ->
+                                                                    SupabaseClient.client.from("bookings").update(
+                                                                        mapOf(
+                                                                            "status" to "completed",
+                                                                            "updated_at" to isoTimestamp
+                                                                        )
+                                                                    ) {
+                                                                        filter { eq("id", bookingId) }
+                                                                    }
                                                                 }
                                                             } catch (e: Exception) {
                                                                 Log.e("RideGo", "Failed to clear booking", e)
@@ -1320,13 +1338,22 @@ fun HomeScreen() {
                                                 status = "pending"
                                             )
 
-                                            SupabaseClient.client.from("bookings").insert(finalBooking)
+                                            val insertedBooking = SupabaseClient.client.from("bookings")
+                                                .insert(finalBooking) {
+                                                    select()
+                                                }.decodeSingleOrNull<BookingStatusUpdate>()
 
-                                            sharedPrefs.edit().putString("active_booking_id", currentUserId).apply()
-                                            activeBookingId = currentUserId
-                                            bookingStatus = "pending"
+                                            if (insertedBooking?.id != null) {
+                                                val realBookingId = insertedBooking.id
 
-                                            success = true
+                                                sharedPrefs.edit().putString("active_booking_id", realBookingId).apply()
+                                                activeBookingId = realBookingId
+                                                bookingStatus = "pending"
+                                                success = true
+                                                statusMessage = "Booking requested! Waiting for driver acceptance..."
+                                            } else {
+                                                throw Exception("Database failed to return valid confirmation signature reference.")
+                                            }
                                         } catch (e: Exception) {
                                             success = false
                                             statusMessage = "Transmission error: ${e.localizedMessage ?: "Network block error"}"
