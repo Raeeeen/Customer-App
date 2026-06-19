@@ -50,14 +50,25 @@ import org.maplibre.android.maps.MapLibreMap
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
-import kotlinx.coroutines.isActive
 import kotlin.math.ceil
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.jan.supabase.postgrest.query.Order
+import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
+import io.github.jan.supabase.realtime.RealtimeChannel
+import io.github.jan.supabase.realtime.channel
+import io.github.jan.supabase.realtime.postgresChangeFlow
+import io.github.jan.supabase.realtime.PostgresAction
+import io.github.jan.supabase.realtime.decodeRecord
+import io.github.jan.supabase.realtime.broadcastFlow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.double
+import kotlinx.serialization.json.float
 
 @Serializable
 data class BookingRequest(
@@ -166,6 +177,7 @@ fun HomeScreen() {
     var pickupLng by remember {
         mutableStateOf(sharedPrefs.getFloat("saved_pickup_lng", 123.4332f).toDouble())
     }
+    var customerRealtimeChannel by remember { mutableStateOf<RealtimeChannel?>(null) }
 
     // MapLibre Maps variables
     val maptilerApiKey = BuildConfig.MAPTILER_API_KEY
@@ -357,7 +369,7 @@ fun HomeScreen() {
                         dropoffInput = selectedDropoffAddress
                         statusMessage = "📍 Pinned to: $selectedDropoffAddress"
                     } else {
-                        // 🟢 FIX: Set both to the exact same readable coordinates so the text field changes immediately
+                        // Set both to the exact same readable coordinates so the text field changes immediately
                         val coordString = "Pinned Point: (%.4f, %.4f)".format(lat, lng)
                         selectedDropoffAddress = coordString
                         dropoffInput = coordString
@@ -366,7 +378,7 @@ fun HomeScreen() {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    // 🟢 FIX: Handle geocoder network/system failures gracefully by updating the fields anyway
+                    // Handle geocoder network/system failures gracefully by updating the fields anyway
                     val coordString = "Pinned Point: (%.4f, %.4f)".format(lat, lng)
                     selectedDropoffAddress = coordString
                     dropoffInput = coordString
@@ -655,73 +667,24 @@ fun HomeScreen() {
         }
     }
 
-    // Updated every 5sec for the status in bookings (it stay even when the app closed)
+    // Updated realtime for the status in bookings (it stay even when the app closed)
     LaunchedEffect(activeBookingId) {
         val currentBookingId = activeBookingId ?: return@LaunchedEffect
-        while (isActive) {
-            try {
-                val updatedBooking = SupabaseClient.client.from("bookings")
-                    .select {
-                        filter {
-                            eq("id", currentBookingId)
-                        }
-                    }.decodeSingleOrNull<BookingStatusUpdate>()
 
+        try {
+            val snapshot = withContext(Dispatchers.IO) {
+                SupabaseClient.client.from("bookings")
+                    .select { filter { eq("id", currentBookingId) } }
+                    .decodeSingleOrNull<BookingStatusUpdate>()
+            }
+            if (snapshot != null) {
+                bookingStatus = snapshot.status
+                if (snapshot.status == "accepted" && snapshot.rider_id != null) {
+                    currentRiderId = snapshot.rider_id
+                    fetchDriverDetails(snapshot.rider_id)
+                }
 
-                if (updatedBooking != null) {
-                    bookingStatus = updatedBooking.status
-                    if (updatedBooking.status == "accepted") {
-                        currentRiderId = updatedBooking.rider_id
-                        fetchDriverDetails(updatedBooking.rider_id)
-                    }
-
-                    // Driver marked it completed/cancelled from their end
-                    if (updatedBooking.status in listOf("completed", "cancelled")) {
-
-                        withContext(Dispatchers.Main) {
-                            nativeMapInstance?.let { map ->
-                                riderVehicleMarker?.let { map.removeMarker(it) }
-                                dropoffMarker?.let { map.removeMarker(it) }
-                                pickupMarker?.let { map.removeMarker(it) }
-                            }
-                            // Explicitly clear references
-                            riderVehicleMarker = null
-                            dropoffMarker = null
-                            pickupMarker = null
-
-                            Toast.makeText(context, "Your ride is complete!", Toast.LENGTH_LONG).show()
-                        }
-
-                        sharedPrefs.edit()
-                            .remove("active_booking_id")
-                            .remove("saved_dropoff_lat")
-                            .remove("saved_dropoff_lng")
-                            .remove("saved_dropoff_address")
-                            .remove("saved_pickup_address")
-                            .remove("saved_trip_distance")
-                            .remove("saved_estimated_fare")
-                            .apply()
-
-                        currentRiderId = null
-                        activeBookingId = null
-                        bookingStatus = null
-
-                        fetchCurrentGPSLocation()
-                        break
-                    }
-                } else {
-
-                    withContext(Dispatchers.Main) {
-                        nativeMapInstance?.let { map ->
-                            riderVehicleMarker?.let { map.removeMarker(it) }
-                            dropoffMarker?.let { map.removeMarker(it) }
-                            pickupMarker?.let { map.removeMarker(it) }
-                        }
-                        riderVehicleMarker = null
-                        dropoffMarker = null
-                        pickupMarker = null
-                    }
-
+                if (snapshot.status in listOf("completed", "cancelled")) {
                     sharedPrefs.edit()
                         .remove("active_booking_id")
                         .remove("saved_dropoff_lat")
@@ -731,18 +694,66 @@ fun HomeScreen() {
                         .remove("saved_trip_distance")
                         .remove("saved_estimated_fare")
                         .apply()
-                    currentRiderId = null
                     activeBookingId = null
                     bookingStatus = null
-
+                    currentRiderId = null
                     fetchCurrentGPSLocation()
-                    break
+                    return@LaunchedEffect
                 }
-            } catch (e: Exception) {
-                Log.e("SupabasePolling", "Polling failed", e)
             }
-            delay(5000)
+        } catch (e: Exception) {
+            Log.e("RideGoResume", "Failed to seed booking state on reopen", e)
         }
+
+        val channel = SupabaseClient.client.channel("customer-booking-$currentBookingId")
+
+        channel.postgresChangeFlow<PostgresAction.Update>(schema = "public") {
+            table = "bookings"
+            filter("id", FilterOperator.EQ, currentBookingId)
+        }.onEach { change ->
+            val updatedBooking = change.decodeRecord<BookingStatusUpdate>()
+            bookingStatus = updatedBooking.status
+
+            if (updatedBooking.status == "accepted") {
+                currentRiderId = updatedBooking.rider_id
+                scope.launch { fetchDriverDetails(updatedBooking.rider_id) }
+            }
+
+            if (updatedBooking.status in listOf("completed", "cancelled")) {
+                withContext(Dispatchers.Main) {
+                    nativeMapInstance?.let { map ->
+                        riderVehicleMarker?.let { map.removeMarker(it) }
+                        dropoffMarker?.let { map.removeMarker(it) }
+                        pickupMarker?.let { map.removeMarker(it) }
+                    }
+                    riderVehicleMarker = null
+                    dropoffMarker = null
+                    pickupMarker = null
+                    Toast.makeText(context, "Your ride is complete!", Toast.LENGTH_LONG).show()
+                }
+
+                sharedPrefs.edit()
+                    .remove("active_booking_id")
+                    .remove("saved_dropoff_lat")
+                    .remove("saved_dropoff_lng")
+                    .remove("saved_dropoff_address")
+                    .remove("saved_pickup_address")
+                    .remove("saved_trip_distance")
+                    .remove("saved_estimated_fare")
+                    .apply()
+
+                currentRiderId = null
+                activeBookingId = null
+                bookingStatus = null
+                fetchCurrentGPSLocation()
+
+                channel.unsubscribe()
+                customerRealtimeChannel = null
+            }
+        }.launchIn(this)
+
+        channel.subscribe()
+        customerRealtimeChannel = channel
     }
 
     // Handles Android View memory lifecycle mapping
@@ -760,6 +771,9 @@ fun HomeScreen() {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            customerRealtimeChannel?.let {
+                scope.launch { it.unsubscribe() }
+            }
         }
     }
 
@@ -788,49 +802,61 @@ fun HomeScreen() {
     LaunchedEffect(currentRiderId) {
         val targetRiderId = currentRiderId ?: return@LaunchedEffect
 
-        while (isActive) {
-            try {
-                // Fetch the rider's latest location telemetry metrics
-                val locationData = withContext(Dispatchers.IO) {
-                    SupabaseClient.client.from("rider_locations")
-                        .select { filter { eq("rider_id", targetRiderId) } }
-                        .decodeSingleOrNull<RiderLocationUpdate>()
-                }
-
-                if (locationData != null) {
-                    val updatedPosition = LatLng(locationData.lat, locationData.lng)
-
-                    // Switch back to Main Thread to modify UI map assets safely
-                    withContext(Dispatchers.Main) {
-                        nativeMapInstance?.let { map ->
-                            if (riderVehicleMarker == null) {
-                                // Generate the vehicle marker node on its initial response packet
-                                riderVehicleMarker = map.addMarker(
-                                    MarkerOptions()
-                                        .position(updatedPosition)
-                                        .title("$driverName is on the way")
-                                )
-                            } else {
-                                // Smoothly slide the vehicle marker across intermediate GPS intervals
-                                animateMarkerLinear(
-                                    marker = riderVehicleMarker,
-                                    targetPosition = updatedPosition,
-                                    durationMs = 2500 // Keeps the slide fluid across the 5s interval window
-                                )
-
-                                // Update marker snippet info live
-                                riderVehicleMarker?.snippet = "Heading: ${locationData.heading.toInt()}°"
-                            }
+        try {
+            val locationData = withContext(Dispatchers.IO) {
+                SupabaseClient.client.from("rider_locations")
+                    .select { filter { eq("rider_id", targetRiderId) } }
+                    .decodeSingleOrNull<RiderLocationUpdate>()
+            }
+            if (locationData != null) {
+                val updatedPosition = LatLng(locationData.lat, locationData.lng)
+                withContext(Dispatchers.Main) {
+                    nativeMapInstance?.let { map ->
+                        if (riderVehicleMarker == null) {
+                            riderVehicleMarker = map.addMarker(
+                                MarkerOptions()
+                                    .position(updatedPosition)
+                                    .title("$driverName is on the way")
+                            )
+                        } else {
+                            animateMarkerLinear(riderVehicleMarker, updatedPosition, 2500)
                         }
                     }
                 }
-            } catch (e: Exception) {
-                Log.e("SupabasePolling", "Telemetry lookup missed this tick", e)
             }
-
-            // Wait exactly 5 seconds before checking again
-            delay(5000)
+        } catch (e: Exception) {
+            Log.e("RiderLocation", "Initial fetch failed", e)
         }
+
+        val broadcastChannel = SupabaseClient.client.channel("booking-updates")
+
+        broadcastChannel.broadcastFlow<JsonObject>(event = "rider-location")
+            .onEach { payload ->
+                val riderId = payload["riderId"]?.jsonPrimitive?.content
+                if (riderId != targetRiderId) return@onEach
+
+                val lat = payload["lat"]?.jsonPrimitive?.double ?: return@onEach
+                val lng = payload["lng"]?.jsonPrimitive?.double ?: return@onEach
+                val heading = payload["heading"]?.jsonPrimitive?.float ?: 0f
+
+                val updatedPosition = LatLng(lat, lng)
+                withContext(Dispatchers.Main) {
+                    nativeMapInstance?.let { map ->
+                        if (riderVehicleMarker == null) {
+                            riderVehicleMarker = map.addMarker(
+                                MarkerOptions()
+                                    .position(updatedPosition)
+                                    .title("$driverName is on the way")
+                            )
+                        } else {
+                            animateMarkerLinear(riderVehicleMarker, updatedPosition, 2500)
+                            riderVehicleMarker?.snippet = "Heading: ${heading.toInt()}°"
+                        }
+                    }
+                }
+            }.launchIn(this)
+
+        broadcastChannel.subscribe()
     }
 
     Scaffold(
