@@ -78,13 +78,13 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.8.5")
     implementation("io.github.jan-tennert.supabase:auth-kt:3.6.0")
     implementation("io.github.jan-tennert.supabase:postgrest-kt:3.6.0")
-    implementation("io.ktor:ktor-client-android:3.0.1")
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("org.maplibre.gl:android-sdk:11.0.0")
     implementation("io.github.jan-tennert.supabase:realtime-kt:3.6.0")
-    implementation("io.ktor:ktor-client-websockets:3.5.0")
+    implementation("io.ktor:ktor-client-websockets:3.0.1")
+    implementation("io.ktor:ktor-client-okhttp:3.0.1")
 
 }
