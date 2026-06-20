@@ -69,6 +69,23 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.float
+import org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom
+import org.maplibre.android.geometry.LatLngBounds
+import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.Property
+import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.SymbolLayer
+import org.maplibre.android.style.sources.GeoJsonSource
+import org.maplibre.geojson.Point
+import kotlin.math.abs
+import androidx.core.graphics.toColorInt
+import kotlinx.coroutines.isActive
+import org.json.JSONArray
+import org.json.JSONObject
+import org.maplibre.android.style.expressions.Expression
+import kotlin.math.pow
+import android.graphics.Color as AndroidColor
+import org.maplibre.android.camera.CameraUpdateFactory
 
 @Serializable
 data class BookingRequest(
@@ -114,6 +131,15 @@ data class FareSettings(
 
 @Serializable
 data class RiderLocationUpdate(
+    @SerialName("rider_id") val riderId: String,
+    @SerialName("current_latitude") val lat: Double,
+    @SerialName("current_longitude") val lng: Double,
+    val heading: Float,
+    @SerialName("updated_at") val updatedAt: String
+)
+
+@Serializable
+data class NearbyRider(
     @SerialName("rider_id") val riderId: String,
     @SerialName("current_latitude") val lat: Double,
     @SerialName("current_longitude") val lng: Double,
@@ -178,6 +204,8 @@ fun HomeScreen() {
         mutableStateOf(sharedPrefs.getFloat("saved_pickup_lng", 123.4332f).toDouble())
     }
     var customerRealtimeChannel by remember { mutableStateOf<RealtimeChannel?>(null) }
+    var nearbyRiderMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
+    var nearbyRidersJob by remember { mutableStateOf<Job?>(null) }
 
     // MapLibre Maps variables
     val maptilerApiKey = BuildConfig.MAPTILER_API_KEY
@@ -291,7 +319,6 @@ fun HomeScreen() {
     suspend fun fetchLiveFareSettings(): FareSettings? {
         return withContext(Dispatchers.IO) {
             try {
-                // ✅ Modern syntax: use .from() instead of .postgrest[]
                 SupabaseClient.client.postgrest.from("fare")
                     .select {
                         filter {
@@ -325,7 +352,6 @@ fun HomeScreen() {
 
     // Get the coordinates of the pickup and dropoff points
     fun updateTripDetails(pickupLat: Double, pickupLng: Double, dropoffLat: Double, dropoffLng: Double) {
-        // 🔒 LOCK: If there's an active booking, preserve the stored values!
         if (bookingStatus != null || activeBookingId != null) return
 
         if (pickupLat != 0.0 && pickupLng != 0.0 && dropoffLat != 0.0 && dropoffLng != 0.0) {
@@ -369,7 +395,6 @@ fun HomeScreen() {
                         dropoffInput = selectedDropoffAddress
                         statusMessage = "📍 Pinned to: $selectedDropoffAddress"
                     } else {
-                        // Set both to the exact same readable coordinates so the text field changes immediately
                         val coordString = "Pinned Point: (%.4f, %.4f)".format(lat, lng)
                         selectedDropoffAddress = coordString
                         dropoffInput = coordString
@@ -378,7 +403,6 @@ fun HomeScreen() {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    // Handle geocoder network/system failures gracefully by updating the fields anyway
                     val coordString = "Pinned Point: (%.4f, %.4f)".format(lat, lng)
                     selectedDropoffAddress = coordString
                     dropoffInput = coordString
@@ -410,19 +434,18 @@ fun HomeScreen() {
 
                     if (connection.responseCode == 200) {
                         val response = connection.inputStream.bufferedReader().use { it.readText() }
-                        val jsonObject = org.json.JSONObject(response)
-                        val featuresArray = jsonObject.optJSONArray("features") ?: org.json.JSONArray()
+                        val jsonObject = JSONObject(response)
+                        val featuresArray = jsonObject.optJSONArray("features") ?: JSONArray()
                         val loadedFeatures = mutableListOf<PlaceSuggestion>()
 
                         for (i in 0 until featuresArray.length()) {
                             val feature = featuresArray.getJSONObject(i)
-                            val properties = feature.optJSONObject("properties") ?: org.json.JSONObject()
-                            val geometry = feature.optJSONObject("geometry") ?: org.json.JSONObject()
+                            val properties = feature.optJSONObject("properties") ?: JSONObject()
+                            val geometry = feature.optJSONObject("geometry") ?: JSONObject()
 
-                            // Extract display name cleanly without generating placeholder "Unknown POI" titles
                             val name = properties.optString("name", "").trim()
                             if (name.isEmpty()) {
-                                continue // Skip processing if there isn't a searchable name text attribute matching
+                                continue
                             }
 
                             val geometryType = geometry.optString("type", "Point")
@@ -498,6 +521,31 @@ fun HomeScreen() {
         }
     }
 
+    fun updateCustomerRadarRadius(map: MapLibreMap) {
+        map.getStyle { style ->
+            if (activeBookingId != null) {
+                val radarLayer = style.getLayerAs<CircleLayer>("customer-radar-layer")
+                radarLayer?.setProperties(PropertyFactory.visibility(Property.NONE))
+                return@getStyle
+            }
+
+            val radarSource = style.getSourceAs<GeoJsonSource>("customer-radar-source")
+            radarSource?.setGeoJson(Point.fromLngLat(pickupLng, pickupLat))
+
+            val radarLayer = style.getLayerAs<CircleLayer>("customer-radar-layer")
+            if (radarLayer != null) {
+                val metersPerPixel = map.projection.getMetersPerPixelAtLatitude(pickupLat)
+                if (metersPerPixel > 0) {
+                    val visualRadiusPixels = (200.0 / metersPerPixel).toFloat()
+                    radarLayer.setProperties(
+                        PropertyFactory.visibility(Property.VISIBLE),
+                        PropertyFactory.circleRadius(visualRadiusPixels)
+                    )
+                }
+            }
+        }
+    }
+
     // Instantiating the MapLibre lifecycle-aware component wrapper container
     val mapView = remember {
         MapView(context).apply {
@@ -508,29 +556,41 @@ fun HomeScreen() {
                 mapLibreMap.setStyle(mapStyleUrl) { style ->
                     try {
                         val customDataUrl = "https://api.maptiler.com/data/019e90d8-5ba2-7d50-b21d-21d1040111aa/features.json?key=$maptilerApiKey"
-                        val geoJsonSource = org.maplibre.android.style.sources.GeoJsonSource("pagadian-pois-source", java.net.URL(customDataUrl))
+                        val geoJsonSource =
+                            GeoJsonSource("pagadian-pois-source", URL(customDataUrl))
                         style.addSource(geoJsonSource)
 
-                        val symbolLayer = org.maplibre.android.style.layers.SymbolLayer("pagadian-pois-layer", "pagadian-pois-source")
+                        val symbolLayer = SymbolLayer("pagadian-pois-layer", "pagadian-pois-source")
                         symbolLayer.setProperties(
-                            org.maplibre.android.style.layers.PropertyFactory.textField(org.maplibre.android.style.expressions.Expression.get("name")),
-                            org.maplibre.android.style.layers.PropertyFactory.textSize(12f),
-                            org.maplibre.android.style.layers.PropertyFactory.textColor(android.graphics.Color.BLACK),
-                            org.maplibre.android.style.layers.PropertyFactory.textHaloColor(android.graphics.Color.WHITE),
-                            org.maplibre.android.style.layers.PropertyFactory.textHaloWidth(1.5f),
-                            org.maplibre.android.style.layers.PropertyFactory.textVariableAnchor(
-                                arrayOf(org.maplibre.android.style.layers.Property.TEXT_ANCHOR_TOP, org.maplibre.android.style.layers.Property.TEXT_ANCHOR_BOTTOM)
+                            PropertyFactory.textField(Expression.get("name")),
+                            PropertyFactory.textSize(12f),
+                            PropertyFactory.textColor(AndroidColor.BLACK),
+                            PropertyFactory.textHaloColor(AndroidColor.WHITE),
+                            PropertyFactory.textHaloWidth(1.5f),
+                            PropertyFactory.textVariableAnchor(
+                                arrayOf(Property.TEXT_ANCHOR_TOP, Property.TEXT_ANCHOR_BOTTOM)
                             )
                         )
 
                         style.addLayer(symbolLayer)
-                        Log.d("MapTilerDebug", "Custom POI dataset layer injected successfully.")
+
+                        val radarPointGeoJson = Point.fromLngLat(pickupLng, pickupLat)
+                        style.addSource(GeoJsonSource("customer-radar-source", radarPointGeoJson))
+                        val radarLayer =
+                            CircleLayer("customer-radar-layer", "customer-radar-source")
+                        radarLayer.setProperties(
+                            PropertyFactory.circleColor("#220A84FF".toColorInt()),
+                            PropertyFactory.circleStrokeColor("#FF0A84FF".toColorInt()),
+                            PropertyFactory.circleStrokeWidth(2f),
+                            PropertyFactory.visibility(Property.NONE)
+                        )
+                        style.addLayer(radarLayer)
                     } catch (e: Exception) {
                         Log.e("MapTilerDebug", "Failed to append custom vector layer", e)
                     }
                 }
 
-                val pagadianBounds = org.maplibre.android.geometry.LatLngBounds.Builder()
+                val pagadianBounds = LatLngBounds.Builder()
                     .include(LatLng(7.92, 123.36))
                     .include(LatLng(7.78, 123.51))
                     .build()
@@ -547,7 +607,6 @@ fun HomeScreen() {
                 val effectivePickupLat = if (pickupLat != 0.0) pickupLat else sharedPrefs.getFloat("saved_pickup_lat", 0.0f).toDouble()
                 val effectivePickupLng = if (pickupLng != 0.0) pickupLng else sharedPrefs.getFloat("saved_pickup_lng", 0.0f).toDouble()
 
-                // 1. Restore Pickup Pin if it exists in SharedPreferences
                 if (effectivePickupLat != 0.0 && effectivePickupLng != 0.0) {
                     val savedPickupLatLng = LatLng(effectivePickupLat, effectivePickupLng)
 
@@ -568,13 +627,11 @@ fun HomeScreen() {
                             .title(selectedDropoffAddress.ifEmpty { "Target Destination" })
                     )
 
-                    // Smoothly focus on your active destination point layout
                     mapLibreMap.moveCamera(
-                        org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(savedTargetLatLng, 15.0)
+                        newLatLngZoom(savedTargetLatLng, 15.0)
                     )
                 }
 
-                // 🎯 SMART TAP INTERCEPTION
                 mapLibreMap.addOnMapLongClickListener { point ->
                     if (pagadianBounds.contains(point)) {
                         dropoffLat = point.latitude
@@ -585,26 +642,16 @@ fun HomeScreen() {
                             .putFloat("saved_dropoff_lng", point.longitude.toFloat())
                             .apply()
 
-                        // 🟢 TRIGGER CALCULATOR HERE: Pass your current pickup coordinates and the new drop-off point
                         updateTripDetails(pickupLat, pickupLng, point.latitude, point.longitude)
-
-                        // Clear old dropoff pin marker
                         dropoffMarker?.let { mapLibreMap.removeMarker(it) }
-
-                        // Convert the geographic LatLng point into sharp physical screen pixels
                         val screenPoint = mapLibreMap.projection.toScreenLocation(point)
-
-                        // Query features in a tiny box around the finger placement (10x10 pixels padding)
                         val rect = android.graphics.RectF(
                             screenPoint.x - 5f, screenPoint.y - 5f,
                             screenPoint.x + 5f, screenPoint.y + 5f
                         )
-
-                        // Pull vector metadata strictly matching our custom text label layer ID
                         val features = mapLibreMap.queryRenderedFeatures(rect, "pagadian-pois-layer")
 
                         if (features.isNotEmpty()) {
-                            // 🟢 Success: User pinned a vector point directly belonging to your dataset!
                             val properties = features[0].properties()
                             val tappedPoiName = properties?.get("name")?.asString ?: ""
 
@@ -612,8 +659,6 @@ fun HomeScreen() {
                                 selectedDropoffAddress = tappedPoiName
                                 dropoffInput = tappedPoiName
                                 statusMessage = "📍 Pinned to: $tappedPoiName"
-
-                                // Drop destination marker pin directly over the exact POI coordinates
                                 dropoffMarker = mapLibreMap.addMarker(
                                     MarkerOptions().position(point).title(tappedPoiName)
                                 )
@@ -623,12 +668,10 @@ fun HomeScreen() {
 
                                 sharedPrefs.edit().putString("saved_dropoff_address", selectedDropoffAddress).apply()
                             } else {
-                                // Fallback if the map element somehow lacked a valid name attribute value string
                                 dropoffMarker = mapLibreMap.addMarker(MarkerOptions().position(point).title("Target Destination"))
                                 reverseGeocodeDropoff(point.latitude, point.longitude)
                             }
                         } else {
-                            // 🔵 No overlapping features detected: Fall back safely to standard raw GPS reverse geocoding
                             dropoffMarker = mapLibreMap.addMarker(MarkerOptions().position(point).title("Target Destination"))
                             reverseGeocodeDropoff(point.latitude, point.longitude)
                         }
@@ -638,6 +681,9 @@ fun HomeScreen() {
                     true
                 }
                 nativeMapInstance = mapLibreMap
+                mapLibreMap.addOnCameraMoveListener {
+                    updateCustomerRadarRadius(mapLibreMap)
+                }
             }
         }
     }
@@ -793,7 +839,7 @@ fun HomeScreen() {
             }
 
             if (activeBookingId == null) {
-                map.animateCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLng(currentLatLng))
+                map.animateCamera(CameraUpdateFactory.newLatLng(currentLatLng))
             }
         }
     }
@@ -859,6 +905,55 @@ fun HomeScreen() {
         broadcastChannel.subscribe()
     }
 
+    LaunchedEffect(pickupLat, pickupLng, activeBookingId, nativeMapInstance) {
+        if (activeBookingId != null) {
+            nativeMapInstance?.let { map ->
+                nearbyRiderMarkers.forEach { map.removeMarker(it) }
+            }
+            nearbyRiderMarkers = emptyList()
+            nearbyRidersJob?.cancel()
+            return@LaunchedEffect
+        }
+
+        nearbyRidersJob?.cancel()
+        nearbyRidersJob = scope.launch {
+            while (isActive) {
+                try {
+                    val allRiderLocations = withContext(Dispatchers.IO) {
+                        SupabaseClient.client.from("rider_locations")
+                            .select()
+                            .decodeList<NearbyRider>()
+                    }
+
+                    val metersPerDegreeLat = 111000.0
+                    val nearbyRiders = allRiderLocations.filter { rider ->
+                        val latDeltaMeters = abs(rider.lat - pickupLat) * metersPerDegreeLat
+                        val lngDeltaMeters = abs(rider.lng - pickupLng) * (metersPerDegreeLat * cos(Math.toRadians(pickupLat)))
+                        val roughDistance = sqrt(latDeltaMeters.pow(2) + lngDeltaMeters.pow(2))
+                        roughDistance <= 200.0
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        nativeMapInstance?.let { map ->
+                            nearbyRiderMarkers.forEach { map.removeMarker(it) }
+                            nearbyRiderMarkers = nearbyRiders.map { rider ->
+                                map.addMarker(
+                                    MarkerOptions()
+                                        .position(LatLng(rider.lat, rider.lng))
+                                        .title("Nearby Rider")
+                                )
+                            }
+                            updateCustomerRadarRadius(map)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("NearbyRiders", "Fetch failed", e)
+                }
+                delay(10000L)
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -894,7 +989,7 @@ fun HomeScreen() {
                 modifier = Modifier.fillMaxSize()
             )
 
-            // OVERLAY INTERFACE DASHBOARD OVER MAP STACK
+            // DASHBOARD OVER MAP STACK
             if (isDashboardVisible) {
                 Card(
                     modifier = Modifier
@@ -1008,7 +1103,7 @@ fun HomeScreen() {
                                     )
                                 )
 
-                                // Suggestion Dropdown List Overlay
+                                // Suggestion Dropdown List
                                 if (suggestions.isNotEmpty()) {
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Card(
@@ -1037,7 +1132,6 @@ fun HomeScreen() {
 
                                                         updateTripDetails(pickupLat, pickupLng, suggestion.latitude, suggestion.longitude)
 
-                                                        // Dynamically insert marker into the MapLibre engine instance
                                                         nativeMapInstance?.let { map ->
                                                             dropoffMarker?.let { map.removeMarker(it) }
 
@@ -1050,7 +1144,7 @@ fun HomeScreen() {
                                                             )
 
                                                             map.animateCamera(
-                                                                org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(targetLatLng, 15.0)
+                                                                newLatLngZoom(targetLatLng, 15.0)
                                                             )
                                                         }
                                                     }
@@ -1062,10 +1156,8 @@ fun HomeScreen() {
                             }
                         }
 
-
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Show Active Tracking Card if Booking exists, else Show standard Form Actions
                         if (activeBookingId != null) {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1216,6 +1308,15 @@ fun HomeScreen() {
                                             ) {
                                                 // Cash Button
                                                 Button(
+                                                    onClick = {},
+                                                    modifier = Modifier.weight(1f),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = emerald600)
+                                                ) {
+                                                    Text("Cash")
+                                                }
+
+                                                // GCash Button
+                                                Button(
                                                     onClick = {
                                                         scope.launch {
                                                             try {
@@ -1255,7 +1356,7 @@ fun HomeScreen() {
 
                                                                 Toast.makeText(
                                                                     context,
-                                                                    "Ride completed! Collected ₱${String.format("%.2f", estimatedFare)} via Cash.",
+                                                                    "Ride completed! Collected ₱${String.format("%.2f", estimatedFare)} via Gcash.",
                                                                     Toast.LENGTH_LONG
                                                                 ).show()
 
@@ -1273,16 +1374,6 @@ fun HomeScreen() {
                                                                 fetchCurrentGPSLocation()
                                                             }
                                                         }
-                                                    },
-                                                    modifier = Modifier.weight(1f),
-                                                    colors = ButtonDefaults.buttonColors(containerColor = emerald600)
-                                                ) {
-                                                    Text("Cash")
-                                                }
-
-                                                // GCash Button
-                                                Button(
-                                                    onClick = {
                                                     },
                                                     modifier = Modifier.weight(1f),
                                                     enabled = true,
@@ -1415,7 +1506,7 @@ fun HomeScreen() {
 
 
              else {
-                // Bottom anchor button shown when the dashboard is hidden
+                // Dashboard when its hidden
                 Button(
                     onClick = { isDashboardVisible = true },
                     modifier = Modifier
