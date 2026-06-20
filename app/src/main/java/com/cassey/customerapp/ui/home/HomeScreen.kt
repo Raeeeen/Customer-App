@@ -10,6 +10,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -87,9 +88,15 @@ import kotlin.math.pow
 import android.graphics.Color as AndroidColor
 import org.maplibre.android.camera.CameraUpdateFactory
 import androidx.compose.material.icons.filled.Info
+import com.cassey.customerapp.network.NetworkQuality
+import com.cassey.customerapp.network.NetworkStatusIndicator
+import com.cassey.customerapp.network.NetworkTypeObserver
+import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.realtime.realtime
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 
 @Serializable
 data class BookingRequest(
@@ -164,7 +171,11 @@ fun HomeScreen() {
     }.format(java.util.Date())
 
     // Initialize MapLibre Engine Instance
-    remember { MapLibre.getInstance(context) }
+    remember { MapLibre.getInstance(context)
+    }
+
+    // Initialize Network Type Monitoring
+    NetworkTypeObserver()
 
     // App State Monitoring
     var loading by remember { mutableStateOf(false) }
@@ -215,6 +226,7 @@ fun HomeScreen() {
     var showTermsDialog by remember { mutableStateOf(false) }
     var isTermsReviewMode by remember { mutableStateOf(false) }
     var riderBroadcastChannel by remember { mutableStateOf<RealtimeChannel?>(null) }
+    var isCustomerRealtimeConnected by remember { mutableStateOf(true) }
 
     // MapLibre Maps variables
     val maptilerApiKey = BuildConfig.MAPTILER_API_KEY
@@ -311,10 +323,13 @@ fun HomeScreen() {
             return
         }
         try {
-            val profile = SupabaseClient.client.from("profiles")
-                .select { filter { eq("id", riderId) } }
-                .decodeSingleOrNull<RiderProfile>()
-
+            val profile = NetworkQuality.timed {
+                withTimeout(6000) {
+                    SupabaseClient.client.from("profiles")
+                        .select { filter { eq("id", riderId) } }
+                        .decodeSingleOrNull<RiderProfile>()
+                }
+            }
             if (profile != null) {
                 driverName = profile.name
                 driverPhone = profile.phoneNumber
@@ -328,12 +343,12 @@ fun HomeScreen() {
     suspend fun fetchLiveFareSettings(): FareSettings? {
         return withContext(Dispatchers.IO) {
             try {
-                SupabaseClient.client.postgrest.from("fare")
-                    .select {
-                        filter {
-                            eq("id", 1)
-                        }
-                    }.decodeSingle<FareSettings>()
+                NetworkQuality.timed {
+                    withTimeout(6000) {
+                        SupabaseClient.client.postgrest.from("fare")
+                            .select { filter { eq("id", 1) } }.decodeSingle<FareSettings>()
+                    }
+                }
             } catch (e: Exception) {
                 Log.e("SupabaseFare", "Failed to fetch remote fare configurations", e)
                 null
@@ -439,6 +454,8 @@ fun HomeScreen() {
 
                     val url = URL(urlString)
                     val connection = url.openConnection() as HttpURLConnection
+                    connection.connectTimeout = 6000
+                    connection.readTimeout = 6000
                     connection.setRequestProperty("Accept", "application/json")
 
                     if (connection.responseCode == 200) {
@@ -740,9 +757,13 @@ fun HomeScreen() {
 
         try {
             val snapshot = withContext(Dispatchers.IO) {
-                SupabaseClient.client.from("bookings")
-                    .select { filter { eq("id", currentBookingId) } }
-                    .decodeSingleOrNull<BookingStatusUpdate>()
+                NetworkQuality.timed {
+                    withTimeout(8000) {
+                        SupabaseClient.client.from("bookings")
+                            .select { filter { eq("id", currentBookingId) } }
+                            .decodeSingleOrNull<BookingStatusUpdate>()
+                    }
+                }
             }
             if (snapshot != null) {
                 bookingStatus = snapshot.status
@@ -899,9 +920,13 @@ fun HomeScreen() {
 
         try {
             val locationData = withContext(Dispatchers.IO) {
-                SupabaseClient.client.from("rider_locations")
-                    .select { filter { eq("rider_id", targetRiderId) } }
-                    .decodeSingleOrNull<RiderLocationUpdate>()
+                NetworkQuality.timed {
+                    withTimeout (8000) {
+                        SupabaseClient.client.from("rider_locations")
+                            .select { filter { eq("rider_id", targetRiderId) } }
+                            .decodeSingleOrNull<RiderLocationUpdate>()
+                    }
+                }
             }
             if (locationData != null) {
                 val updatedPosition = LatLng(locationData.lat, locationData.lng)
@@ -970,13 +995,17 @@ fun HomeScreen() {
             while (isActive) {
                 try {
                     val allRiderLocations = withContext(Dispatchers.IO) {
-                        SupabaseClient.client.from("rider_locations")
-                            .select {
-                                filter {
-                                    eq("is_active", true)
-                                }
+                        NetworkQuality.timed {
+                            withTimeout (8000) {
+                                SupabaseClient.client.from("rider_locations")
+                                    .select {
+                                        filter {
+                                            eq("is_active", true)
+                                        }
+                                    }
+                                    .decodeList<NearbyRider>()
                             }
-                            .decodeList<NearbyRider>()
+                        }
                     }
 
                     val metersPerDegreeLat = 111000.0
@@ -1018,6 +1047,12 @@ fun HomeScreen() {
                 isTermsReviewMode = false
                 showTermsDialog = true
             }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        SupabaseClient.client.realtime.status.collect { status ->
+            isCustomerRealtimeConnected = status == Realtime.Status.CONNECTED
         }
     }
 
@@ -1071,6 +1106,19 @@ fun HomeScreen() {
                 factory = { mapView },
                 modifier = Modifier.fillMaxSize()
             )
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(12.dp)
+                    .background(
+                        color = Color.Black.copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(20.dp)
+                    )
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                NetworkStatusIndicator()
+            }
 
             // DASHBOARD OVER MAP STACK
             if (isDashboardVisible) {
@@ -1402,20 +1450,27 @@ fun HomeScreen() {
                                                 Button(
                                                     onClick = {
                                                         scope.launch {
+                                                            var updateSucceeded = false
                                                             try {
                                                                 activeBookingId?.let { bookingId ->
-                                                                    SupabaseClient.client.from("bookings").update(
-                                                                        mapOf(
-                                                                            "status" to "completed",
-                                                                            "updated_at" to isoTimestamp
-                                                                        )
-                                                                    ) {
-                                                                        filter { eq("id", bookingId) }
+                                                                    NetworkQuality.timed {
+                                                                        withTimeout(10000) {
+                                                                            SupabaseClient.client.from("bookings").update(
+                                                                                mapOf("status" to "completed", "updated_at" to isoTimestamp)
+                                                                            ) { filter { eq("id", bookingId) } }
+                                                                        }
                                                                     }
+                                                                    updateSucceeded = true
                                                                 }
+                                                            } catch (e: TimeoutCancellationException) {
+                                                                Log.e("RideGo", "Failed to clear booking", e)
+                                                                Toast.makeText(context, "Connection too slow to confirm completion. Please check your connection and try again.", Toast.LENGTH_LONG).show()
                                                             } catch (e: Exception) {
                                                                 Log.e("RideGo", "Failed to clear booking", e)
-                                                            } finally {
+                                                                Toast.makeText(context, "Couldn't reach the server. Please try again.", Toast.LENGTH_LONG).show()
+                                                            }
+
+                                                            if (updateSucceeded) {
                                                                 sharedPrefs.edit()
                                                                     .remove("active_booking_id")
                                                                     .remove("saved_dropoff_lat")
@@ -1538,10 +1593,13 @@ fun HomeScreen() {
                                                 status = "pending"
                                             )
 
-                                            val insertedBooking = SupabaseClient.client.from("bookings")
-                                                .insert(finalBooking) {
-                                                    select()
-                                                }.decodeSingleOrNull<BookingStatusUpdate>()
+                                            val insertedBooking = NetworkQuality.timed {
+                                                withTimeout (8000) {
+                                                    SupabaseClient.client.from("bookings")
+                                                        .insert(finalBooking) { select() }
+                                                        .decodeSingleOrNull<BookingStatusUpdate>()
+                                                }
+                                            }
 
                                             if (insertedBooking?.id != null) {
                                                 val realBookingId = insertedBooking.id
@@ -1554,6 +1612,10 @@ fun HomeScreen() {
                                             } else {
                                                 throw Exception("Database failed to return valid confirmation signature reference.")
                                             }
+                                        } catch (e: TimeoutCancellationException) {
+                                            success = false
+                                            statusMessage = "Your connection is very slow — the request may still be processing. Please wait a moment before retrying to avoid a duplicate booking."
+                                            Log.e("RideGoSubmit", "Booking insert timed out", e)
                                         } catch (e: Exception) {
                                             success = false
                                             statusMessage = "Transmission error: ${e.localizedMessage ?: "Network block error"}"
