@@ -87,6 +87,9 @@ import kotlin.math.pow
 import android.graphics.Color as AndroidColor
 import org.maplibre.android.camera.CameraUpdateFactory
 import androidx.compose.material.icons.filled.Info
+import io.github.jan.supabase.realtime.realtime
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.NonCancellable
 
 @Serializable
 data class BookingRequest(
@@ -211,6 +214,7 @@ fun HomeScreen() {
     var termsRecord by remember { mutableStateOf<TermsOfServiceRecord?>(null) }
     var showTermsDialog by remember { mutableStateOf(false) }
     var isTermsReviewMode by remember { mutableStateOf(false) }
+    var riderBroadcastChannel by remember { mutableStateOf<RealtimeChannel?>(null) }
 
     // MapLibre Maps variables
     val maptilerApiKey = BuildConfig.MAPTILER_API_KEY
@@ -541,7 +545,7 @@ fun HomeScreen() {
             if (radarLayer != null) {
                 val metersPerPixel = map.projection.getMetersPerPixelAtLatitude(pickupLat)
                 if (metersPerPixel > 0) {
-                    val visualRadiusPixels = (200.0 / metersPerPixel).toFloat()
+                    val visualRadiusPixels = (400.0 / metersPerPixel).toFloat()
                     radarLayer.setProperties(
                         PropertyFactory.visibility(Property.VISIBLE),
                         PropertyFactory.circleRadius(visualRadiusPixels)
@@ -720,6 +724,18 @@ fun HomeScreen() {
 
     // Updated realtime for the status in bookings (it stay even when the app closed)
     LaunchedEffect(activeBookingId) {
+        customerRealtimeChannel?.let { stale ->
+            withContext(NonCancellable) {
+                try {
+                    stale.unsubscribe()
+                    SupabaseClient.client.realtime.removeChannel(stale)
+                } catch (e: Exception) {
+                    Log.e("Realtime", "Failed cleaning stale booking channel", e)
+                }
+            }
+            customerRealtimeChannel = null
+        }
+
         val currentBookingId = activeBookingId ?: return@LaunchedEffect
 
         try {
@@ -793,13 +809,20 @@ fun HomeScreen() {
                     .remove("saved_estimated_fare")
                     .apply()
 
+                withContext(NonCancellable) {
+                    try {
+                        channel.unsubscribe()
+                        SupabaseClient.client.realtime.removeChannel(channel)
+                    } catch (e: Exception) {
+                        Log.e("Realtime", "Failed unsubscribing completed booking channel", e)
+                    }
+                }
+                customerRealtimeChannel = null
+
                 currentRiderId = null
                 activeBookingId = null
                 bookingStatus = null
                 fetchCurrentGPSLocation()
-
-                channel.unsubscribe()
-                customerRealtimeChannel = null
             }
         }.launchIn(this)
 
@@ -822,8 +845,17 @@ fun HomeScreen() {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            customerRealtimeChannel?.let {
-                scope.launch { it.unsubscribe() }
+            listOf(customerRealtimeChannel, riderBroadcastChannel).forEach { ch ->
+                ch?.let {
+                    GlobalScope.launch(Dispatchers.IO + NonCancellable) {
+                        try {
+                            it.unsubscribe()
+                            SupabaseClient.client.realtime.removeChannel(it)
+                        } catch (e: Exception) {
+                            Log.e("Realtime", "Unsubscribe on dispose failed", e)
+                        }
+                    }
+                }
             }
         }
     }
@@ -851,6 +883,18 @@ fun HomeScreen() {
 
     // Rider location and marker
     LaunchedEffect(currentRiderId) {
+        riderBroadcastChannel?.let { stale ->
+            withContext(NonCancellable) {
+                try {
+                    stale.unsubscribe()
+                    SupabaseClient.client.realtime.removeChannel(stale)
+                } catch (e: Exception) {
+                    Log.e("Realtime", "Failed cleaning stale broadcast channel", e)
+                }
+            }
+            riderBroadcastChannel = null
+        }
+
         val targetRiderId = currentRiderId ?: return@LaunchedEffect
 
         try {
@@ -908,6 +952,7 @@ fun HomeScreen() {
             }.launchIn(this)
 
         broadcastChannel.subscribe()
+        riderBroadcastChannel = broadcastChannel
     }
 
     LaunchedEffect(pickupLat, pickupLng, activeBookingId, nativeMapInstance) {
