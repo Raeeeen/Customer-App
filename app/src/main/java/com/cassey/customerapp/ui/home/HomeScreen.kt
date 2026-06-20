@@ -86,6 +86,7 @@ import org.maplibre.android.style.expressions.Expression
 import kotlin.math.pow
 import android.graphics.Color as AndroidColor
 import org.maplibre.android.camera.CameraUpdateFactory
+import androidx.compose.material.icons.filled.Info
 
 @Serializable
 data class BookingRequest(
@@ -144,7 +145,8 @@ data class NearbyRider(
     @SerialName("current_latitude") val lat: Double,
     @SerialName("current_longitude") val lng: Double,
     val heading: Float,
-    @SerialName("updated_at") val updatedAt: String
+    @SerialName("updated_at") val updatedAt: String,
+    @SerialName("is_active") val isActive: Boolean = false
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -206,6 +208,9 @@ fun HomeScreen() {
     var customerRealtimeChannel by remember { mutableStateOf<RealtimeChannel?>(null) }
     var nearbyRiderMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
     var nearbyRidersJob by remember { mutableStateOf<Job?>(null) }
+    var termsRecord by remember { mutableStateOf<TermsOfServiceRecord?>(null) }
+    var showTermsDialog by remember { mutableStateOf(false) }
+    var isTermsReviewMode by remember { mutableStateOf(false) }
 
     // MapLibre Maps variables
     val maptilerApiKey = BuildConfig.MAPTILER_API_KEY
@@ -921,7 +926,11 @@ fun HomeScreen() {
                 try {
                     val allRiderLocations = withContext(Dispatchers.IO) {
                         SupabaseClient.client.from("rider_locations")
-                            .select()
+                            .select {
+                                filter {
+                                    eq("is_active", true)
+                                }
+                            }
                             .decodeList<NearbyRider>()
                     }
 
@@ -954,11 +963,40 @@ fun HomeScreen() {
         }
     }
 
+    // ToS
+    LaunchedEffect(Unit) {
+        val fetched = fetchCustomerTermsOfService()
+        if (fetched != null) {
+            termsRecord = fetched
+            val alreadyAccepted = hasAcceptedCurrentTerms(context, fetched.version)
+            if (!alreadyAccepted) {
+                isTermsReviewMode = false
+                showTermsDialog = true
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(text = "Ride&Go", fontWeight = FontWeight.Bold, color = Color.White) },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            if (termsRecord != null) {
+                                isTermsReviewMode = true
+                                showTermsDialog = true
+                            } else {
+                                Toast.makeText(context, "Terms of Service unavailable right now.", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = "View Terms of Service",
+                            tint = Color.White
+                        )
+                    }
                     TextButton(
                         onClick = {
                             scope.launch {
@@ -1502,10 +1540,7 @@ fun HomeScreen() {
                         }
                     }
                 }
-            }
-
-
-             else {
+            } else {
                 // Dashboard when its hidden
                 Button(
                     onClick = { isDashboardVisible = true },
@@ -1529,7 +1564,16 @@ fun HomeScreen() {
                     }
                 }
             }
-
+        }
+    }
+    termsRecord?.let { terms ->
+        if (showTermsDialog) {
+            TermsOfServiceDialog(
+                terms = terms,
+                isReadOnlyReview = isTermsReviewMode,
+                onAccept = { showTermsDialog = false },
+                onDismissReview = { showTermsDialog = false }
+            )
         }
     }
 }
