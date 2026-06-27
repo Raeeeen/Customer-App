@@ -436,7 +436,7 @@ private suspend fun handleDatabaseAndFinish(
                         "id" to currentUser.id,
                         "name" to name,
                         "phone_number" to formattedPhone,
-                        "role" to "rider"
+                        "role" to "customer"
                     )
                 )
             } else {
@@ -444,7 +444,7 @@ private suspend fun handleDatabaseAndFinish(
                     mapOf(
                         "id" to currentUser.id,
                         "phone_number" to formattedPhone,
-                        "role" to "rider"
+                        "role" to "customer"
                     )
                 ) {
                     onConflict = "id"
