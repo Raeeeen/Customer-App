@@ -1,102 +1,70 @@
 package com.cassey.customerapp.ui.home
 
 import android.Manifest
-import android.animation.TypeEvaluator
-import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.location.Geocoder
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import com.cassey.customerapp.BuildConfig
 import com.cassey.customerapp.data.SupabaseClient
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.LatLngBounds
+import com.google.maps.android.compose.*
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
-import org.maplibre.android.MapLibre
-import org.maplibre.android.annotations.Marker
-import org.maplibre.android.annotations.MarkerOptions
-import org.maplibre.android.camera.CameraPosition
-import org.maplibre.android.geometry.LatLng
-import org.maplibre.android.maps.MapView
-import org.maplibre.android.maps.MapLibreMap
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.Locale
-import kotlin.math.ceil
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
-import kotlin.math.asin
-import kotlin.math.cos
-import kotlin.math.sin
-import kotlin.math.sqrt
-import io.github.jan.supabase.realtime.RealtimeChannel
-import io.github.jan.supabase.realtime.channel
-import io.github.jan.supabase.realtime.postgresChangeFlow
-import io.github.jan.supabase.realtime.PostgresAction
-import io.github.jan.supabase.realtime.decodeRecord
-import io.github.jan.supabase.realtime.broadcastFlow
+import io.github.jan.supabase.realtime.*
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.double
-import kotlinx.serialization.json.float
-import org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom
-import org.maplibre.android.geometry.LatLngBounds
-import org.maplibre.android.style.layers.CircleLayer
-import org.maplibre.android.style.layers.Property
-import org.maplibre.android.style.layers.PropertyFactory
-import org.maplibre.android.style.layers.SymbolLayer
-import org.maplibre.android.style.sources.GeoJsonSource
-import org.maplibre.geojson.Point
-import kotlin.math.abs
-import androidx.core.graphics.toColorInt
-import kotlinx.coroutines.isActive
-import org.json.JSONArray
-import org.json.JSONObject
-import org.maplibre.android.style.expressions.Expression
-import kotlin.math.pow
-import android.graphics.Color as AndroidColor
-import org.maplibre.android.camera.CameraUpdateFactory
-import androidx.compose.material.icons.filled.Info
+import kotlinx.serialization.json.jsonPrimitive
+import java.util.Locale
+import kotlin.math.*
 import com.cassey.customerapp.network.NetworkQuality
 import com.cassey.customerapp.network.NetworkStatusIndicator
 import com.cassey.customerapp.network.NetworkTypeObserver
-import io.github.jan.supabase.realtime.Realtime
-import io.github.jan.supabase.realtime.realtime
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
+import java.net.HttpURLConnection
+import java.net.URL
+import org.json.JSONArray
+import org.json.JSONObject
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
 
 @Serializable
 data class BookingRequest(
@@ -163,79 +131,55 @@ data class NearbyRider(
 @Composable
 fun HomeScreen() {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
-    val isoTimestamp = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
-        timeZone = java.util.TimeZone.getTimeZone("UTC")
-    }.format(java.util.Date())
-
-    // Initialize MapLibre Engine Instance
-    remember { MapLibre.getInstance(context)
+    val isoTimestamp = remember {
+        java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }.format(java.util.Date())
     }
 
-    // Initialize Network Type Monitoring
     NetworkTypeObserver()
 
-    // App State Monitoring
+    val sharedPrefs = remember { context.getSharedPreferences("RideGoPrefs", android.content.Context.MODE_PRIVATE) }
+
+    // State
     var loading by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf("Locating user session & locking GPS...") }
     var success by remember { mutableStateOf<Boolean?>(null) }
     var isDashboardVisible by remember { mutableStateOf(true) }
-    val sharedPrefs = remember { context.getSharedPreferences("RideGoPrefs", android.content.Context.MODE_PRIVATE) }
     var driverName by remember { mutableStateOf("") }
     var driverPhone by remember { mutableStateOf("") }
-    val savedBookingId = sharedPrefs.getString("active_booking_id", null)
-    var activeBookingId by remember {
-        mutableStateOf(sharedPrefs.getString("active_booking_id", null))
-    }
-    var bookingStatus by remember { mutableStateOf(if (savedBookingId != null) "pending" else null) }
+    var activeBookingId by remember { mutableStateOf(sharedPrefs.getString("active_booking_id", null)) }
+    var bookingStatus by remember { mutableStateOf(if (sharedPrefs.getString("active_booking_id", null) != null) "pending" else null) }
     var currentRiderId by remember { mutableStateOf<String?>(null) }
-    var riderVehicleMarker by remember { mutableStateOf<Marker?>(null) }
-    var dropoffLat by remember {
-        mutableStateOf(sharedPrefs.getFloat("saved_dropoff_lat", 0.0f).toDouble())
-    }
-    var dropoffLng by remember {
-        mutableStateOf(sharedPrefs.getFloat("saved_dropoff_lng", 0.0f).toDouble())
-    }
-    var selectedDropoffAddress by remember {
-        mutableStateOf(sharedPrefs.getString("saved_dropoff_address", "") ?: "")
-    }
-    var dropoffInput by remember {
-        mutableStateOf(sharedPrefs.getString("saved_dropoff_address", "") ?: "")
-    }
-    var tripDistance by remember {
-        mutableStateOf(sharedPrefs.getFloat("saved_trip_distance", 0.0f).toDouble())
-    }
-    var estimatedFare by remember {
-        mutableStateOf(sharedPrefs.getFloat("saved_estimated_fare", 0.0f).toDouble())
-    }
-    var pickupAddress by remember {
-        mutableStateOf(sharedPrefs.getString("saved_pickup_address", "Locating your position...") ?: "Locating your position...")
-    }
-    var pickupLat by remember {
-        mutableStateOf(sharedPrefs.getFloat("saved_pickup_lat", 7.8285f).toDouble())
-    }
-    var pickupLng by remember {
-        mutableStateOf(sharedPrefs.getFloat("saved_pickup_lng", 123.4332f).toDouble())
-    }
+    var riderLatLng by remember { mutableStateOf<LatLng?>(null) }
+    var dropoffLat by remember { mutableStateOf(sharedPrefs.getFloat("saved_dropoff_lat", 0.0f).toDouble()) }
+    var dropoffLng by remember { mutableStateOf(sharedPrefs.getFloat("saved_dropoff_lng", 0.0f).toDouble()) }
+    var selectedDropoffAddress by remember { mutableStateOf(sharedPrefs.getString("saved_dropoff_address", "") ?: "") }
+    var dropoffInput by remember { mutableStateOf(sharedPrefs.getString("saved_dropoff_address", "") ?: "") }
+    var tripDistance by remember { mutableStateOf(sharedPrefs.getFloat("saved_trip_distance", 0.0f).toDouble()) }
+    var estimatedFare by remember { mutableStateOf(sharedPrefs.getFloat("saved_estimated_fare", 0.0f).toDouble()) }
+    var pickupAddress by remember { mutableStateOf(sharedPrefs.getString("saved_pickup_address", "Locating your position...") ?: "Locating your position...") }
+    var pickupLat by remember { mutableStateOf(sharedPrefs.getFloat("saved_pickup_lat", 7.8285f).toDouble()) }
+    var pickupLng by remember { mutableStateOf(sharedPrefs.getFloat("saved_pickup_lng", 123.4332f).toDouble()) }
     var customerRealtimeChannel by remember { mutableStateOf<RealtimeChannel?>(null) }
-    var nearbyRiderMarkers by remember { mutableStateOf<List<Marker>>(emptyList()) }
+    var riderBroadcastChannel by remember { mutableStateOf<RealtimeChannel?>(null) }
+    var nearbyRiders by remember { mutableStateOf<List<NearbyRider>>(emptyList()) }
     var nearbyRidersJob by remember { mutableStateOf<Job?>(null) }
+    var suggestions by remember { mutableStateOf<List<PlaceSuggestion>>(emptyList()) }
+    var searchJob by remember { mutableStateOf<Job?>(null) }
     var termsRecord by remember { mutableStateOf<TermsOfServiceRecord?>(null) }
     var showTermsDialog by remember { mutableStateOf(false) }
     var isTermsReviewMode by remember { mutableStateOf(false) }
-    var riderBroadcastChannel by remember { mutableStateOf<RealtimeChannel?>(null) }
     var isCustomerRealtimeConnected by remember { mutableStateOf(true) }
 
-    // MapLibre Maps variables
-    val maptilerApiKey = BuildConfig.MAPTILER_API_KEY
-    var nativeMapInstance by remember { mutableStateOf<MapLibreMap?>(null) }
-    var pickupMarker by remember { mutableStateOf<Marker?>(null) }
-    var dropoffMarker by remember { mutableStateOf<Marker?>(null) }
-    var suggestions by remember { mutableStateOf<List<PlaceSuggestion>>(emptyList()) }
-    var searchJob by remember { mutableStateOf<Job?>(null) }
-    var pagadianFeaturesCache: List<PlaceSuggestion> = emptyList()
+    // Google Maps state
+    val pagadianBounds = remember { LatLngBounds(LatLng(7.800, 123.360), LatLng(7.860, 123.480)) }
+
+    val cameraPositionState = rememberCameraPositionState {
+        position = CameraPosition.fromLatLngZoom(LatLng(7.8275, 123.420), 13f)  // center of new bounds
+    }
 
     // Tailwind Palette Configurations
     val slate900 = Color(0xFF0F172A)
@@ -257,9 +201,9 @@ fun HomeScreen() {
                 val addresses = geocoder.getFromLocation(lat, lng, 1)
                 withContext(Dispatchers.Main) {
                     if (!addresses.isNullOrEmpty()) {
-                        val addressObj = addresses[0]
-                        val fallbackName = addressObj.thoroughfare ?: addressObj.subLocality ?: addressObj.locality ?: "Current Location"
-                        pickupAddress = "$fallbackName, ${addressObj.locality ?: ""}".trimEnd(',', ' ')
+                        val addr = addresses[0]
+                        val name = addr.thoroughfare ?: addr.subLocality ?: addr.locality ?: "Current Location"
+                        pickupAddress = "$name, ${addr.locality ?: ""}".trimEnd(',', ' ')
                     } else {
                         pickupAddress = "Lat: %.4f, Lng: %.4f".format(lat, lng)
                     }
@@ -277,27 +221,29 @@ fun HomeScreen() {
     @SuppressLint("MissingPermission")
     fun fetchCurrentGPSLocation() {
         if (activeBookingId != null) return
-
         statusMessage = "Fetching precise GPS coordinates..."
         fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
             .addOnSuccessListener { location ->
                 if (location != null) {
                     pickupLat = location.latitude
                     pickupLng = location.longitude
-
                     sharedPrefs.edit()
                         .putFloat("saved_pickup_lat", location.latitude.toFloat())
                         .putFloat("saved_pickup_lng", location.longitude.toFloat())
                         .apply()
-
                     reverseGeocodePickup(location.latitude, location.longitude)
-                    statusMessage = "GPS lock established. Drop pin or click book!"
+                    scope.launch {
+                        cameraPositionState.animate(
+                            CameraUpdateFactory.newLatLngZoom(LatLng(location.latitude, location.longitude), 15f)
+                        )
+                    }
+                    statusMessage = "GPS lock established. Long-press map to pin destination!"
                 } else {
-                    statusMessage = "Failed to lock GPS automatically. Using Pagadian City fallback center."
+                    statusMessage = "Failed to lock GPS. Using Pagadian City center fallback."
                 }
             }
             .addOnFailureListener {
-                statusMessage = "GPS error: ${it.localizedMessage}. Using default fallback point."
+                statusMessage = "GPS error: ${it.localizedMessage}"
             }
     }
 
@@ -317,11 +263,7 @@ fun HomeScreen() {
 
     //  Rider Details when accepted
     suspend fun fetchDriverDetails(riderId: String?) {
-        if (riderId.isNullOrEmpty()) {
-            driverName = ""
-            driverPhone = ""
-            return
-        }
+        if (riderId.isNullOrEmpty()) { driverName = ""; driverPhone = ""; return }
         try {
             val profile = NetworkQuality.timed {
                 withTimeout(6000) {
@@ -330,12 +272,9 @@ fun HomeScreen() {
                         .decodeSingleOrNull<RiderProfile>()
                 }
             }
-            if (profile != null) {
-                driverName = profile.name
-                driverPhone = profile.phoneNumber
-            }
+            if (profile != null) { driverName = profile.name; driverPhone = profile.phoneNumber }
         } catch (e: Exception) {
-            Log.e("SupabaseRealtime", "Failed to look up rider profile details", e)
+            Log.e("CustomerApp", "Failed to fetch rider profile", e)
         }
     }
 
@@ -346,11 +285,12 @@ fun HomeScreen() {
                 NetworkQuality.timed {
                     withTimeout(6000) {
                         SupabaseClient.client.postgrest.from("fare")
-                            .select { filter { eq("id", 1) } }.decodeSingle<FareSettings>()
+                            .select { filter { eq("id", 1) } }
+                            .decodeSingle<FareSettings>()
                     }
                 }
             } catch (e: Exception) {
-                Log.e("SupabaseFare", "Failed to fetch remote fare configurations", e)
+                Log.e("CustomerApp", "Failed to fetch fare settings", e)
                 null
             }
         }
@@ -359,78 +299,133 @@ fun HomeScreen() {
     // Calculate distance between two coordinates
     fun calculateDistanceInKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val earthRadiusKm = 6371.0
-
         val dLat = Math.toRadians(lat2 - lat1)
         val dLon = Math.toRadians(lon2 - lon1)
-
-        val originLatRad = Math.toRadians(lat1)
-        val destinationLatRad = Math.toRadians(lat2)
-
-        val a = sin(dLat / 2) * sin(dLat / 2) +
-                sin(dLon / 2) * sin(dLon / 2) * cos(originLatRad) * cos(destinationLatRad)
-
-        val c = 2 * asin(sqrt(a))
-
-        return earthRadiusKm * c
+        val a = sin(dLat / 2).pow(2) + cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2).pow(2)
+        return earthRadiusKm * 2 * asin(sqrt(a))
     }
 
     // Get the coordinates of the pickup and dropoff points
-    fun updateTripDetails(pickupLat: Double, pickupLng: Double, dropoffLat: Double, dropoffLng: Double) {
+    fun updateTripDetails(pLat: Double, pLng: Double, dLat: Double, dLng: Double) {
         if (bookingStatus != null || activeBookingId != null) return
-
-        if (pickupLat != 0.0 && pickupLng != 0.0 && dropoffLat != 0.0 && dropoffLng != 0.0) {
-            val distance = calculateDistanceInKm(pickupLat, pickupLng, dropoffLat, dropoffLng)
+        if (pLat != 0.0 && pLng != 0.0 && dLat != 0.0 && dLng != 0.0) {
+            val distance = calculateDistanceInKm(pLat, pLng, dLat, dLng)
             tripDistance = distance
-
             sharedPrefs.edit().putFloat("saved_trip_distance", distance.toFloat()).apply()
-
             scope.launch {
-                val liveSettings = fetchLiveFareSettings()
-                val base = liveSettings?.base_fare ?: 15.0
-                val succeeding = liveSettings?.succeeding_km_rate ?: 2.0
-
-                val computedFare = if (distance <= 1.0) {
-                    base
-                } else {
-                    val succeedingDistance = distance - 1.0
-                    val chargeableSucceedingKm = ceil(succeedingDistance)
-                    base + (chargeableSucceedingKm * succeeding)
+                val settings = fetchLiveFareSettings()
+                val base = settings?.base_fare ?: 15.0
+                val succeeding = settings?.succeeding_km_rate ?: 2.0
+                val fare = if (distance <= 1.0) base else {
+                    base + (ceil(distance - 1.0) * succeeding)
                 }
-
                 withContext(Dispatchers.Main) {
-                    estimatedFare = computedFare
-                    sharedPrefs.edit().putFloat("saved_estimated_fare", computedFare.toFloat()).apply()
+                    estimatedFare = fare
+                    sharedPrefs.edit().putFloat("saved_estimated_fare", fare.toFloat()).apply()
                 }
             }
         }
     }
 
-    // Reverse Geocode helper to convert MapLibre pins to text address strings
-    fun reverseGeocodeDropoff(lat: Double, lng: Double) {
+    // Smart snap: find nearest recognized place, fall back to geocode
+    fun smartSnapDropoff(lat: Double, lng: Double) {
         scope.launch(Dispatchers.IO) {
+            try {
+                val mapsApiKey = com.cassey.customerapp.BuildConfig.MAPS_API_KEY
+
+                // 1. Try Places Nearby Search first — prefers named places over streets
+                val nearbyUrl = "https://maps.googleapis.com/maps/api/place/nearbysearch/json" +
+                        "?location=$lat,$lng" +
+                        "&rankby=distance" +
+                        "&type=establishment" +
+                        "&key=$mapsApiKey"
+
+                val nearbyConn = URL(nearbyUrl).openConnection() as HttpURLConnection
+                nearbyConn.connectTimeout = 6000
+                nearbyConn.readTimeout = 6000
+
+                if (nearbyConn.responseCode == 200) {
+                    val response = nearbyConn.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(response)
+                    val results = json.optJSONArray("results")
+
+                    if (results != null && results.length() > 0) {
+                        val top = results.getJSONObject(0)
+                        val name = top.optString("name", "")
+                        val vicinity = top.optString("vicinity", "")
+                        val location = top.optJSONObject("geometry")?.optJSONObject("location")
+                        val placeLat = location?.getDouble("lat") ?: lat
+                        val placeLng = location?.getDouble("lng") ?: lng
+
+                        // Only snap if within 80m — otherwise it's too far from actual pin
+                        val distToPlace = calculateDistanceInKm(lat, lng, placeLat, placeLng) * 1000
+                        val snappedLat = if (distToPlace <= 250) placeLat else lat
+                        val snappedLng = if (distToPlace <= 250) placeLng else lng
+                        val displayName = buildString {
+                            if (name.isNotEmpty()) append(name)
+                            if (vicinity.isNotEmpty()) {
+                                if (name.isNotEmpty()) append(", ")
+                                append(vicinity)
+                            }
+                            if (isEmpty()) append("Pinned: (%.4f, %.4f)".format(lat, lng))
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            dropoffLat = snappedLat
+                            dropoffLng = snappedLng
+                            selectedDropoffAddress = displayName
+                            dropoffInput = displayName
+                            sharedPrefs.edit()
+                                .putFloat("saved_dropoff_lat", snappedLat.toFloat())
+                                .putFloat("saved_dropoff_lng", snappedLng.toFloat())
+                                .putString("saved_dropoff_address", displayName)
+                                .apply()
+                            updateTripDetails(pickupLat, pickupLng, snappedLat, snappedLng)
+                            statusMessage = "📍 Snapped to: $displayName"
+                        }
+                        return@launch
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("CustomerApp", "Nearby search failed, falling back to geocoder", e)
+            }
+
+            // 2. Fallback — reverse geocode if Places API fails
             try {
                 val geocoder = Geocoder(context, Locale.getDefault())
                 val addresses = geocoder.getFromLocation(lat, lng, 1)
                 withContext(Dispatchers.Main) {
                     if (!addresses.isNullOrEmpty()) {
                         val addr = addresses[0]
-                        val feature = addr.thoroughfare ?: addr.subLocality ?: "Pinned Location"
-                        selectedDropoffAddress = "$feature, ${addr.locality ?: "Pagadian City"}"
-                        dropoffInput = selectedDropoffAddress
-                        statusMessage = "📍 Pinned to: $selectedDropoffAddress"
+                        val feature = addr.featureName?.takeIf { it.first().isLetter() }
+                            ?: addr.thoroughfare
+                            ?: addr.subLocality
+                            ?: "Pinned Location"
+                        val locality = addr.locality ?: "Pagadian City"
+                        val displayName = "$feature, $locality"
+                        selectedDropoffAddress = displayName
+                        dropoffInput = displayName
+                        sharedPrefs.edit().putString("saved_dropoff_address", displayName).apply()
+                        updateTripDetails(pickupLat, pickupLng, lat, lng)
+                        statusMessage = "📍 Pinned to: $displayName"
+                        scope.launch {
+                            cameraPositionState.animate(
+                                CameraUpdateFactory.newLatLngZoom(LatLng(lat, lng), 18f)
+                            )
+                        }
                     } else {
-                        val coordString = "Pinned Point: (%.4f, %.4f)".format(lat, lng)
+                        val coordString = "Pinned: (%.4f, %.4f)".format(lat, lng)
                         selectedDropoffAddress = coordString
                         dropoffInput = coordString
-                        statusMessage = "📍 Pinned to custom map coordinates"
+                        statusMessage = "📍 Pinned to custom coordinates"
                     }
+                    sharedPrefs.edit().putString("saved_dropoff_address", selectedDropoffAddress).apply()
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    val coordString = "Pinned Point: (%.4f, %.4f)".format(lat, lng)
+                    val coordString = "Pinned: (%.4f, %.4f)".format(lat, lng)
                     selectedDropoffAddress = coordString
                     dropoffInput = coordString
-                    statusMessage = "📍 Pinned to custom map coordinates"
                 }
             }
         }
@@ -440,315 +435,133 @@ fun HomeScreen() {
     fun searchDestination(query: String) {
         searchJob?.cancel()
         val cleanQuery = query.trim()
-        if (cleanQuery.length < 2) {
-            suggestions = emptyList()
-            return
-        }
-
+        if (cleanQuery.length < 2) { suggestions = emptyList(); return }
         searchJob = scope.launch(Dispatchers.IO) {
             delay(200)
-
             try {
-                if (pagadianFeaturesCache.isEmpty()) {
-                    val urlString = "https://api.maptiler.com/data/019e90d8-5ba2-7d50-b21d-21d1040111aa/features.json?key=$maptilerApiKey"
+                val mapsApiKey = com.cassey.customerapp.BuildConfig.MAPS_API_KEY
+                val encodedQuery = java.net.URLEncoder.encode(cleanQuery, "UTF-8")
 
-                    val url = URL(urlString)
-                    val connection = url.openConnection() as HttpURLConnection
-                    connection.connectTimeout = 6000
-                    connection.readTimeout = 6000
-                    connection.setRequestProperty("Accept", "application/json")
+                val urlString = "https://maps.googleapis.com/maps/api/place/autocomplete/json" +
+                        "?input=$encodedQuery" +
+                        "&location=7.8275,123.420" +
+                        "&radius=9000" +
+                        "&strictbounds=true" +
+                        "&key=$mapsApiKey"
 
-                    if (connection.responseCode == 200) {
-                        val response = connection.inputStream.bufferedReader().use { it.readText() }
-                        val jsonObject = JSONObject(response)
-                        val featuresArray = jsonObject.optJSONArray("features") ?: JSONArray()
-                        val loadedFeatures = mutableListOf<PlaceSuggestion>()
+                val connection = URL(urlString).openConnection() as HttpURLConnection
+                connection.connectTimeout = 6000
+                connection.readTimeout = 6000
 
-                        for (i in 0 until featuresArray.length()) {
-                            val feature = featuresArray.getJSONObject(i)
-                            val properties = feature.optJSONObject("properties") ?: JSONObject()
-                            val geometry = feature.optJSONObject("geometry") ?: JSONObject()
+                if (connection.responseCode == 200) {
+                    val response = connection.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(response)
+                    val predictions = json.optJSONArray("predictions") ?: JSONArray()
+                    val loaded = mutableListOf<PlaceSuggestion>()
 
-                            val name = properties.optString("name", "").trim()
-                            if (name.isEmpty()) {
-                                continue
-                            }
+                    for (i in 0 until predictions.length()) {
+                        val prediction = predictions.getJSONObject(i)
+                        val placeId = prediction.optString("place_id", "")
+                        val description = prediction.optString("description", "").trim()
+                        if (placeId.isEmpty() || description.isEmpty()) continue
 
-                            val geometryType = geometry.optString("type", "Point")
-                            val coordinatesArray = geometry.optJSONArray("coordinates")
+                        try {
+                            val detailsUrl = "https://maps.googleapis.com/maps/api/place/details/json" +
+                                    "?place_id=$placeId" +
+                                    "&fields=geometry" +
+                                    "&key=$mapsApiKey"
 
-                            if (coordinatesArray != null && coordinatesArray.length() > 0) {
-                                var lon = 0.0
-                                var lat = 0.0
-                                var parseSuccess = false
+                            val detailsConnection = URL(detailsUrl).openConnection() as HttpURLConnection
+                            detailsConnection.connectTimeout = 5000
+                            detailsConnection.readTimeout = 5000
 
-                                try {
-                                    if (geometryType == "Point") {
-                                        lon = coordinatesArray.getDouble(0)
-                                        lat = coordinatesArray.getDouble(1)
-                                        parseSuccess = true
-                                    } else if (geometryType == "Polygon" && coordinatesArray.length() > 0) {
-                                        val exteriorRing = coordinatesArray.optJSONArray(0)
-                                        if (exteriorRing != null && exteriorRing.length() > 0) {
-                                            val firstPoint = exteriorRing.optJSONArray(0)
-                                            if (firstPoint != null && firstPoint.length() >= 2) {
-                                                lon = firstPoint.getDouble(0)
-                                                lat = firstPoint.getDouble(1)
-                                                parseSuccess = true
-                                            }
-                                        }
+                            if (detailsConnection.responseCode == 200) {
+                                val detailsResponse = detailsConnection.inputStream.bufferedReader().use { it.readText() }
+                                val detailsJson = JSONObject(detailsResponse)
+                                val location = detailsJson
+                                    .optJSONObject("result")
+                                    ?.optJSONObject("geometry")
+                                    ?.optJSONObject("location")
+
+                                if (location != null) {
+                                    val lat = location.getDouble("lat")
+                                    val lng = location.getDouble("lng")
+
+                                    // Hard filter — drop anything outside the actual map bounds
+                                    if (lat in 7.800..7.860 && lng in 123.360..123.480) {
+                                        loaded.add(PlaceSuggestion(description, lat, lng))
                                     }
-                                } catch (e: Exception) {
-                                    Log.e("MapTilerDebug", "Skipping corrupt coordinate layout format structures", e)
-                                }
-
-                                if (parseSuccess) {
-                                    loadedFeatures.add(PlaceSuggestion(displayName = name, latitude = lat, longitude = lon))
                                 }
                             }
+                        } catch (e: Exception) {
+                            Log.e("CustomerApp", "Place details fetch failed for $placeId", e)
+                            continue
                         }
-                        pagadianFeaturesCache = loadedFeatures
-                    } else {
-                        Log.e("MapTilerDebug", "Server error code response payload tracking check: ${connection.responseCode}")
                     }
+
+                    withContext(Dispatchers.Main) { suggestions = loaded.take(5) }
                 }
-
-                val filteredSuggestions = pagadianFeaturesCache.filter { poi ->
-                    poi.displayName.contains(cleanQuery, ignoreCase = true)
-                }.take(5)
-
-                withContext(Dispatchers.Main) {
-                    suggestions = filteredSuggestions
-                }
-
             } catch (e: Exception) {
-                Log.e("MapTilerDebug", "Search exception", e)
+                Log.e("CustomerApp", "Search failed", e)
             }
         }
     }
 
-    fun animateMarkerLinear(marker: Marker?, targetPosition: LatLng, durationMs: Long = 1500) {
-        if (marker == null) return
-        val startPosition = marker.position
-
-        val latLngEvaluator = TypeEvaluator<LatLng> { fraction, startValue, endValue ->
-            LatLng(
-                startValue.latitude + (endValue.latitude - startValue.latitude) * fraction,
-                startValue.longitude + (endValue.longitude - startValue.longitude) * fraction
-            )
-        }
-
-        ValueAnimator.ofObject(latLngEvaluator, startPosition, targetPosition).apply {
-            duration = durationMs
-            addUpdateListener { animator ->
-                marker.position = animator.animatedValue as LatLng
-            }
-            start()
-        }
+    fun clearBookingState() {
+        sharedPrefs.edit()
+            .remove("active_booking_id")
+            .remove("saved_dropoff_lat")
+            .remove("saved_dropoff_lng")
+            .remove("saved_dropoff_address")
+            .remove("saved_pickup_address")
+            .remove("saved_pickup_lat")
+            .remove("saved_pickup_lng")
+            .remove("saved_trip_distance")
+            .remove("saved_estimated_fare")
+            .apply()
+        activeBookingId = null
+        bookingStatus = null
+        currentRiderId = null
+        riderLatLng = null
+        estimatedFare = 0.0
+        tripDistance = 0.0
+        dropoffLat = 0.0
+        dropoffLng = 0.0
+        pickupLat = 0.0
+        pickupLng = 0.0
+        selectedDropoffAddress = ""
+        dropoffInput = ""
+        suggestions = emptyList()
+        driverName = ""
+        driverPhone = ""
+        success = null
+        statusMessage = "Long-press on the map to pin your destination!"
     }
 
-    fun updateCustomerRadarRadius(map: MapLibreMap) {
-        map.getStyle { style ->
-            if (activeBookingId != null) {
-                val radarLayer = style.getLayerAs<CircleLayer>("customer-radar-layer")
-                radarLayer?.setProperties(PropertyFactory.visibility(Property.NONE))
-                return@getStyle
-            }
-
-            val radarSource = style.getSourceAs<GeoJsonSource>("customer-radar-source")
-            radarSource?.setGeoJson(Point.fromLngLat(pickupLng, pickupLat))
-
-            val radarLayer = style.getLayerAs<CircleLayer>("customer-radar-layer")
-            if (radarLayer != null) {
-                val metersPerPixel = map.projection.getMetersPerPixelAtLatitude(pickupLat)
-                if (metersPerPixel > 0) {
-                    val visualRadiusPixels = (400.0 / metersPerPixel).toFloat()
-                    radarLayer.setProperties(
-                        PropertyFactory.visibility(Property.VISIBLE),
-                        PropertyFactory.circleRadius(visualRadiusPixels)
-                    )
-                }
-            }
-        }
-    }
-
-    // Instantiating the MapLibre lifecycle-aware component wrapper container
-    val mapView = remember {
-        MapView(context).apply {
-            getMapAsync { mapLibreMap ->
-
-                val mapStyleUrl = "https://api.maptiler.com/maps/streets-v2/style.json?key=$maptilerApiKey"
-
-                mapLibreMap.setStyle(mapStyleUrl) { style ->
-                    try {
-                        val customDataUrl = "https://api.maptiler.com/data/019e90d8-5ba2-7d50-b21d-21d1040111aa/features.json?key=$maptilerApiKey"
-                        val geoJsonSource =
-                            GeoJsonSource("pagadian-pois-source", URL(customDataUrl))
-                        style.addSource(geoJsonSource)
-
-                        val symbolLayer = SymbolLayer("pagadian-pois-layer", "pagadian-pois-source")
-                        symbolLayer.setProperties(
-                            PropertyFactory.textField(Expression.get("name")),
-                            PropertyFactory.textSize(12f),
-                            PropertyFactory.textColor(AndroidColor.BLACK),
-                            PropertyFactory.textHaloColor(AndroidColor.WHITE),
-                            PropertyFactory.textHaloWidth(1.5f),
-                            PropertyFactory.textVariableAnchor(
-                                arrayOf(Property.TEXT_ANCHOR_TOP, Property.TEXT_ANCHOR_BOTTOM)
-                            )
-                        )
-
-                        style.addLayer(symbolLayer)
-
-                        val radarPointGeoJson = Point.fromLngLat(pickupLng, pickupLat)
-                        style.addSource(GeoJsonSource("customer-radar-source", radarPointGeoJson))
-                        val radarLayer =
-                            CircleLayer("customer-radar-layer", "customer-radar-source")
-                        radarLayer.setProperties(
-                            PropertyFactory.circleColor("#220A84FF".toColorInt()),
-                            PropertyFactory.circleStrokeColor("#FF0A84FF".toColorInt()),
-                            PropertyFactory.circleStrokeWidth(2f),
-                            PropertyFactory.visibility(Property.NONE)
-                        )
-                        style.addLayer(radarLayer)
-                    } catch (e: Exception) {
-                        Log.e("MapTilerDebug", "Failed to append custom vector layer", e)
-                    }
-                }
-
-                val pagadianBounds = LatLngBounds.Builder()
-                    .include(LatLng(7.92, 123.36))
-                    .include(LatLng(7.78, 123.51))
-                    .build()
-
-                mapLibreMap.setLatLngBoundsForCameraTarget(pagadianBounds)
-                mapLibreMap.setMinZoomPreference(11.0)
-                mapLibreMap.setMaxZoomPreference(18.0)
-
-                mapLibreMap.cameraPosition = CameraPosition.Builder()
-                    .target(LatLng(7.8285, 123.4332))
-                    .zoom(13.0)
-                    .build()
-
-                val effectivePickupLat = if (pickupLat != 0.0) pickupLat else sharedPrefs.getFloat("saved_pickup_lat", 0.0f).toDouble()
-                val effectivePickupLng = if (pickupLng != 0.0) pickupLng else sharedPrefs.getFloat("saved_pickup_lng", 0.0f).toDouble()
-
-                if (effectivePickupLat != 0.0 && effectivePickupLng != 0.0) {
-                    val savedPickupLatLng = LatLng(effectivePickupLat, effectivePickupLng)
-
-                    pickupMarker?.let { mapLibreMap.removeMarker(it) }
-                    pickupMarker = mapLibreMap.addMarker(
-                        MarkerOptions()
-                            .position(savedPickupLatLng)
-                            .title("Your Pickup Location")
-                    )
-                }
-
-                if (dropoffLat != 0.0 && dropoffLng != 0.0) {
-                    val savedTargetLatLng = LatLng(dropoffLat, dropoffLng)
-
-                    dropoffMarker = mapLibreMap.addMarker(
-                        MarkerOptions()
-                            .position(savedTargetLatLng)
-                            .title(selectedDropoffAddress.ifEmpty { "Target Destination" })
-                    )
-
-                    mapLibreMap.moveCamera(
-                        newLatLngZoom(savedTargetLatLng, 15.0)
-                    )
-                }
-
-                mapLibreMap.addOnMapLongClickListener { point ->
-                    if (pagadianBounds.contains(point)) {
-                        dropoffLat = point.latitude
-                        dropoffLng = point.longitude
-
-                        sharedPrefs.edit()
-                            .putFloat("saved_dropoff_lat", point.latitude.toFloat())
-                            .putFloat("saved_dropoff_lng", point.longitude.toFloat())
-                            .apply()
-
-                        updateTripDetails(pickupLat, pickupLng, point.latitude, point.longitude)
-                        dropoffMarker?.let { mapLibreMap.removeMarker(it) }
-                        val screenPoint = mapLibreMap.projection.toScreenLocation(point)
-                        val rect = android.graphics.RectF(
-                            screenPoint.x - 5f, screenPoint.y - 5f,
-                            screenPoint.x + 5f, screenPoint.y + 5f
-                        )
-                        val features = mapLibreMap.queryRenderedFeatures(rect, "pagadian-pois-layer")
-
-                        if (features.isNotEmpty()) {
-                            val properties = features[0].properties()
-                            val tappedPoiName = properties?.get("name")?.asString ?: ""
-
-                            if (tappedPoiName.isNotEmpty()) {
-                                selectedDropoffAddress = tappedPoiName
-                                dropoffInput = tappedPoiName
-                                statusMessage = "📍 Pinned to: $tappedPoiName"
-                                dropoffMarker = mapLibreMap.addMarker(
-                                    MarkerOptions().position(point).title(tappedPoiName)
-                                )
-
-                                selectedDropoffAddress = tappedPoiName
-                                dropoffInput = tappedPoiName
-
-                                sharedPrefs.edit().putString("saved_dropoff_address", selectedDropoffAddress).apply()
-                            } else {
-                                dropoffMarker = mapLibreMap.addMarker(MarkerOptions().position(point).title("Target Destination"))
-                                reverseGeocodeDropoff(point.latitude, point.longitude)
-                            }
-                        } else {
-                            dropoffMarker = mapLibreMap.addMarker(MarkerOptions().position(point).title("Target Destination"))
-                            reverseGeocodeDropoff(point.latitude, point.longitude)
-                        }
-                    } else {
-                        statusMessage = "⚠️ Outside operational zone. Please pin inside Pagadian City."
-                    }
-                    true
-                }
-                nativeMapInstance = mapLibreMap
-                mapLibreMap.addOnCameraMoveListener {
-                    updateCustomerRadarRadius(mapLibreMap)
-                }
-            }
-        }
-    }
-
-    // Trigger Permissions on Screen Load automatically
+    // Permission request on launch
     LaunchedEffect(Unit) {
         if (activeBookingId != null) {
             val cachedAddress = sharedPrefs.getString("saved_pickup_address", "")
-            if (!cachedAddress.isNullOrEmpty()) {
-                pickupAddress = cachedAddress
-            } else {
-                reverseGeocodePickup(pickupLat, pickupLng)
-            }
-
+            if (!cachedAddress.isNullOrEmpty()) pickupAddress = cachedAddress
+            else reverseGeocodePickup(pickupLat, pickupLng)
             pickupLat = sharedPrefs.getFloat("saved_pickup_lat", 0.0f).toDouble()
             pickupLng = sharedPrefs.getFloat("saved_pickup_lng", 0.0f).toDouble()
-
             dropoffLat = sharedPrefs.getFloat("saved_dropoff_lat", 0.0f).toDouble()
             dropoffLng = sharedPrefs.getFloat("saved_dropoff_lng", 0.0f).toDouble()
         } else {
-            locationPermissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
-            )
+            locationPermissionLauncher.launch(arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ))
         }
     }
 
-    // Updated realtime for the status in bookings (it stay even when the app closed)
+    // Booking realtime listener
     LaunchedEffect(activeBookingId) {
         customerRealtimeChannel?.let { stale ->
             withContext(NonCancellable) {
-                try {
-                    stale.unsubscribe()
-                    SupabaseClient.client.realtime.removeChannel(stale)
-                } catch (e: Exception) {
-                    Log.e("Realtime", "Failed cleaning stale booking channel", e)
-                }
+                try { stale.unsubscribe(); SupabaseClient.client.realtime.removeChannel(stale) }
+                catch (e: Exception) { Log.e("Realtime", "Stale channel cleanup failed", e) }
             }
             customerRealtimeChannel = null
         }
@@ -771,78 +584,37 @@ fun HomeScreen() {
                     currentRiderId = snapshot.rider_id
                     fetchDriverDetails(snapshot.rider_id)
                 }
-
                 if (snapshot.status in listOf("completed", "cancelled")) {
-                    sharedPrefs.edit()
-                        .remove("active_booking_id")
-                        .remove("saved_dropoff_lat")
-                        .remove("saved_dropoff_lng")
-                        .remove("saved_dropoff_address")
-                        .remove("saved_pickup_address")
-                        .remove("saved_trip_distance")
-                        .remove("saved_estimated_fare")
-                        .apply()
-                    activeBookingId = null
-                    bookingStatus = null
-                    currentRiderId = null
+                    clearBookingState()
                     fetchCurrentGPSLocation()
                     return@LaunchedEffect
                 }
             }
         } catch (e: Exception) {
-            Log.e("RideGoResume", "Failed to seed booking state on reopen", e)
+            Log.e("CustomerApp", "Failed to seed booking state", e)
         }
 
         val channel = SupabaseClient.client.channel("customer-booking-$currentBookingId")
-
         channel.postgresChangeFlow<PostgresAction.Update>(schema = "public") {
             table = "bookings"
             filter("id", FilterOperator.EQ, currentBookingId)
         }.onEach { change ->
-            val updatedBooking = change.decodeRecord<BookingStatusUpdate>()
-            bookingStatus = updatedBooking.status
-
-            if (updatedBooking.status == "accepted") {
-                currentRiderId = updatedBooking.rider_id
-                scope.launch { fetchDriverDetails(updatedBooking.rider_id) }
+            val updated = change.decodeRecord<BookingStatusUpdate>()
+            bookingStatus = updated.status
+            if (updated.status == "accepted") {
+                currentRiderId = updated.rider_id
+                scope.launch { fetchDriverDetails(updated.rider_id) }
             }
-
-            if (updatedBooking.status in listOf("completed", "cancelled")) {
+            if (updated.status in listOf("completed", "cancelled")) {
                 withContext(Dispatchers.Main) {
-                    nativeMapInstance?.let { map ->
-                        riderVehicleMarker?.let { map.removeMarker(it) }
-                        dropoffMarker?.let { map.removeMarker(it) }
-                        pickupMarker?.let { map.removeMarker(it) }
-                    }
-                    riderVehicleMarker = null
-                    dropoffMarker = null
-                    pickupMarker = null
                     Toast.makeText(context, "Your ride is complete!", Toast.LENGTH_LONG).show()
                 }
-
-                sharedPrefs.edit()
-                    .remove("active_booking_id")
-                    .remove("saved_dropoff_lat")
-                    .remove("saved_dropoff_lng")
-                    .remove("saved_dropoff_address")
-                    .remove("saved_pickup_address")
-                    .remove("saved_trip_distance")
-                    .remove("saved_estimated_fare")
-                    .apply()
-
                 withContext(NonCancellable) {
-                    try {
-                        channel.unsubscribe()
-                        SupabaseClient.client.realtime.removeChannel(channel)
-                    } catch (e: Exception) {
-                        Log.e("Realtime", "Failed unsubscribing completed booking channel", e)
-                    }
+                    try { channel.unsubscribe(); SupabaseClient.client.realtime.removeChannel(channel) }
+                    catch (e: Exception) { Log.e("Realtime", "Channel cleanup failed", e) }
                 }
                 customerRealtimeChannel = null
-
-                currentRiderId = null
-                activeBookingId = null
-                bookingStatus = null
+                clearBookingState()
                 fetchCurrentGPSLocation()
             }
         }.launchIn(this)
@@ -851,67 +623,12 @@ fun HomeScreen() {
         customerRealtimeChannel = channel
     }
 
-    // Handles Android View memory lifecycle mapping
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_START -> mapView.onStart()
-                Lifecycle.Event.ON_RESUME -> mapView.onResume()
-                Lifecycle.Event.ON_PAUSE -> mapView.onPause()
-                Lifecycle.Event.ON_STOP -> mapView.onStop()
-                Lifecycle.Event.ON_DESTROY -> mapView.onDestroy()
-                else -> {}
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-            listOf(customerRealtimeChannel, riderBroadcastChannel).forEach { ch ->
-                ch?.let {
-                    GlobalScope.launch(Dispatchers.IO + NonCancellable) {
-                        try {
-                            it.unsubscribe()
-                            SupabaseClient.client.realtime.removeChannel(it)
-                        } catch (e: Exception) {
-                            Log.e("Realtime", "Unsubscribe on dispose failed", e)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Side-Effect observer tracking changes to auto-adjust pickup tracking variables
-    LaunchedEffect(pickupLat, pickupLng, nativeMapInstance) {
-        val currentLatLng = LatLng(pickupLat, pickupLng)
-        nativeMapInstance?.let { map ->
-            val existingMarker = pickupMarker
-            if (existingMarker == null) {
-                pickupMarker = map.addMarker(
-                    MarkerOptions()
-                        .position(currentLatLng)
-                        .title("Your Current Location")
-                )
-            } else {
-                existingMarker.position = currentLatLng
-            }
-
-            if (activeBookingId == null) {
-                map.animateCamera(CameraUpdateFactory.newLatLng(currentLatLng))
-            }
-        }
-    }
-
-    // Rider location and marker
+    // Rider location broadcast listener
     LaunchedEffect(currentRiderId) {
         riderBroadcastChannel?.let { stale ->
             withContext(NonCancellable) {
-                try {
-                    stale.unsubscribe()
-                    SupabaseClient.client.realtime.removeChannel(stale)
-                } catch (e: Exception) {
-                    Log.e("Realtime", "Failed cleaning stale broadcast channel", e)
-                }
+                try { stale.unsubscribe(); SupabaseClient.client.realtime.removeChannel(stale) }
+                catch (e: Exception) { Log.e("Realtime", "Stale broadcast cleanup failed", e) }
             }
             riderBroadcastChannel = null
         }
@@ -921,7 +638,7 @@ fun HomeScreen() {
         try {
             val locationData = withContext(Dispatchers.IO) {
                 NetworkQuality.timed {
-                    withTimeout (8000) {
+                    withTimeout(8000) {
                         SupabaseClient.client.from("rider_locations")
                             .select { filter { eq("rider_id", targetRiderId) } }
                             .decodeSingleOrNull<RiderLocationUpdate>()
@@ -929,50 +646,21 @@ fun HomeScreen() {
                 }
             }
             if (locationData != null) {
-                val updatedPosition = LatLng(locationData.lat, locationData.lng)
-                withContext(Dispatchers.Main) {
-                    nativeMapInstance?.let { map ->
-                        if (riderVehicleMarker == null) {
-                            riderVehicleMarker = map.addMarker(
-                                MarkerOptions()
-                                    .position(updatedPosition)
-                                    .title("$driverName is on the way")
-                            )
-                        } else {
-                            animateMarkerLinear(riderVehicleMarker, updatedPosition, 2500)
-                        }
-                    }
-                }
+                riderLatLng = LatLng(locationData.lat, locationData.lng)
             }
         } catch (e: Exception) {
-            Log.e("RiderLocation", "Initial fetch failed", e)
+            Log.e("CustomerApp", "Initial rider location fetch failed", e)
         }
 
         val broadcastChannel = SupabaseClient.client.channel("booking-updates")
-
         broadcastChannel.broadcastFlow<JsonObject>(event = "rider-location")
             .onEach { payload ->
                 val riderId = payload["riderId"]?.jsonPrimitive?.content
                 if (riderId != targetRiderId) return@onEach
-
                 val lat = payload["lat"]?.jsonPrimitive?.double ?: return@onEach
                 val lng = payload["lng"]?.jsonPrimitive?.double ?: return@onEach
-                val heading = payload["heading"]?.jsonPrimitive?.float ?: 0f
-
-                val updatedPosition = LatLng(lat, lng)
                 withContext(Dispatchers.Main) {
-                    nativeMapInstance?.let { map ->
-                        if (riderVehicleMarker == null) {
-                            riderVehicleMarker = map.addMarker(
-                                MarkerOptions()
-                                    .position(updatedPosition)
-                                    .title("$driverName is on the way")
-                            )
-                        } else {
-                            animateMarkerLinear(riderVehicleMarker, updatedPosition, 2500)
-                            riderVehicleMarker?.snippet = "Heading: ${heading.toInt()}°"
-                        }
-                    }
+                    riderLatLng = LatLng(lat, lng)
                 }
             }.launchIn(this)
 
@@ -980,59 +668,50 @@ fun HomeScreen() {
         riderBroadcastChannel = broadcastChannel
     }
 
-    LaunchedEffect(pickupLat, pickupLng, activeBookingId, nativeMapInstance) {
+    // Nearby riders polling
+    LaunchedEffect(pickupLat, pickupLng, activeBookingId) {
         if (activeBookingId != null) {
-            nativeMapInstance?.let { map ->
-                nearbyRiderMarkers.forEach { map.removeMarker(it) }
-            }
-            nearbyRiderMarkers = emptyList()
+            nearbyRiders = emptyList()
             nearbyRidersJob?.cancel()
             return@LaunchedEffect
         }
-
         nearbyRidersJob?.cancel()
         nearbyRidersJob = scope.launch {
             while (isActive) {
                 try {
-                    val allRiderLocations = withContext(Dispatchers.IO) {
+                    val all = withContext(Dispatchers.IO) {
                         NetworkQuality.timed {
-                            withTimeout (8000) {
+                            withTimeout(8000) {
                                 SupabaseClient.client.from("rider_locations")
-                                    .select {
-                                        filter {
-                                            eq("is_active", true)
-                                        }
-                                    }
+                                    .select { filter { eq("is_active", true) } }
                                     .decodeList<NearbyRider>()
                             }
                         }
                     }
-
-                    val metersPerDegreeLat = 111000.0
-                    val nearbyRiders = allRiderLocations.filter { rider ->
-                        val latDeltaMeters = abs(rider.lat - pickupLat) * metersPerDegreeLat
-                        val lngDeltaMeters = abs(rider.lng - pickupLng) * (metersPerDegreeLat * cos(Math.toRadians(pickupLat)))
-                        val roughDistance = sqrt(latDeltaMeters.pow(2) + lngDeltaMeters.pow(2))
-                        roughDistance <= 200.0
-                    }
-
-                    withContext(Dispatchers.Main) {
-                        nativeMapInstance?.let { map ->
-                            nearbyRiderMarkers.forEach { map.removeMarker(it) }
-                            nearbyRiderMarkers = nearbyRiders.map { rider ->
-                                map.addMarker(
-                                    MarkerOptions()
-                                        .position(LatLng(rider.lat, rider.lng))
-                                        .title("Nearby Rider")
-                                )
-                            }
-                            updateCustomerRadarRadius(map)
-                        }
+                    val metersPerDeg = 111000.0
+                    nearbyRiders = all.filter { rider ->
+                        val latDelta = abs(rider.lat - pickupLat) * metersPerDeg
+                        val lngDelta = abs(rider.lng - pickupLng) * (metersPerDeg * cos(Math.toRadians(pickupLat)))
+                        sqrt(latDelta.pow(2) + lngDelta.pow(2)) <= 200.0
                     }
                 } catch (e: Exception) {
-                    Log.e("NearbyRiders", "Fetch failed", e)
+                    Log.e("CustomerApp", "Nearby riders fetch failed", e)
                 }
                 delay(10000L)
+            }
+        }
+    }
+
+    // Cleanup on dispose
+    DisposableEffect(Unit) {
+        onDispose {
+            listOf(customerRealtimeChannel, riderBroadcastChannel).forEach { ch ->
+                ch?.let {
+                    GlobalScope.launch(Dispatchers.IO + NonCancellable) {
+                        try { it.unsubscribe(); SupabaseClient.client.realtime.removeChannel(it) }
+                        catch (e: Exception) { Log.e("Realtime", "Dispose cleanup failed", e) }
+                    }
+                }
             }
         }
     }
@@ -1050,6 +729,7 @@ fun HomeScreen() {
         }
     }
 
+    // Realtime status
     LaunchedEffect(Unit) {
         SupabaseClient.client.realtime.status.collect { status ->
             isCustomerRealtimeConnected = status == Realtime.Status.CONNECTED
@@ -1102,10 +782,96 @@ fun HomeScreen() {
             contentAlignment = if (isDashboardVisible) Alignment.BottomCenter else Alignment.BottomCenter
         ) {
 
-            AndroidView(
-                factory = { mapView },
-                modifier = Modifier.fillMaxSize()
-            )
+            // Google Map
+            GoogleMap(
+                modifier = Modifier.fillMaxSize(),
+                cameraPositionState = cameraPositionState,
+                properties = MapProperties(
+                    latLngBoundsForCameraTarget = pagadianBounds,
+                    minZoomPreference = 13f,
+                    maxZoomPreference = 25f
+                ),
+                uiSettings = MapUiSettings(
+                    zoomControlsEnabled = false,
+                    myLocationButtonEnabled = false
+                ),
+                onMapLongClick = { point ->
+                    if (pagadianBounds.contains(point)) {
+                        if (activeBookingId != null) return@GoogleMap
+                        dropoffLat = point.latitude
+                        dropoffLng = point.longitude
+                        statusMessage = "🔍 Finding nearest place..."
+                        smartSnapDropoff(point.latitude, point.longitude)
+                    } else {
+                        statusMessage = "⚠️ Outside operational zone. Pin inside Pagadian City."
+                    }
+                }
+            ) {
+                // Pickup marker
+                if (pickupLat != 0.0 && pickupLng != 0.0) {
+                    val pickupMarkerState = rememberMarkerState(
+                        position = LatLng(pickupLat, pickupLng)
+                    )
+                    LaunchedEffect(pickupLat, pickupLng) {
+                        pickupMarkerState.position = LatLng(pickupLat, pickupLng)
+                    }
+                    Marker(
+                        state = pickupMarkerState,
+                        title = "Your Pickup Location",
+                        snippet = pickupAddress
+                    )
+                }
+
+                // Dropoff marker
+                if (dropoffLat != 0.0 && dropoffLng != 0.0) {
+                    val dropoffMarkerState = rememberMarkerState(
+                        position = LatLng(dropoffLat, dropoffLng)
+                    )
+                    LaunchedEffect(dropoffLat, dropoffLng) {
+                        dropoffMarkerState.position = LatLng(dropoffLat, dropoffLng)
+                    }
+                    Marker(
+                        state = dropoffMarkerState,
+                        title = "Dropoff Destination",
+                        snippet = selectedDropoffAddress
+                    )
+                }
+
+                // Rider marker
+                riderLatLng?.let { rLatLng ->
+                    val riderMarkerState = rememberMarkerState(position = rLatLng)
+                    LaunchedEffect(rLatLng) {
+                        riderMarkerState.position = rLatLng
+                    }
+                    Marker(
+                        state = riderMarkerState,
+                        title = if (driverName.isNotEmpty()) "$driverName is on the way" else "Rider is on the way"
+                    )
+                }
+
+                // Nearby rider markers (when no active booking)
+                if (activeBookingId == null) {
+                    nearbyRiders.forEach { rider ->
+                        val nearbyMarkerState = rememberMarkerState(
+                            position = LatLng(rider.lat, rider.lng)
+                        )
+                        Marker(
+                            state = nearbyMarkerState,
+                            title = "Nearby Rider"
+                        )
+                    }
+
+                    if (pickupLat != 0.0 && pickupLng != 0.0) {
+                        Circle(
+                            center = LatLng(pickupLat, pickupLng),
+                            radius = 400.0,
+                            strokeColor = Color(0xFF0A84FF),
+                            strokeWidth = 2f,
+                            fillColor = Color(0x220A84FF)
+                        )
+                    }
+                }
+            }
 
             Box(
                 modifier = Modifier
@@ -1120,7 +886,7 @@ fun HomeScreen() {
                 NetworkStatusIndicator()
             }
 
-            // DASHBOARD OVER MAP STACK
+            // Dashboard panel
             if (isDashboardVisible) {
                 Card(
                     modifier = Modifier
@@ -1207,11 +973,7 @@ fun HomeScreen() {
                                             dropoffLng = 0.0
                                             selectedDropoffAddress = ""
                                             suggestions = emptyList()
-                                            statusMessage = "Hold/Long-press on the map to pin your destination!"
-                                            nativeMapInstance?.let { map ->
-                                                dropoffMarker?.let { map.removeMarker(it) }
-                                                dropoffMarker = null
-                                            }
+                                            statusMessage = "Long-press on the map to pin your destination!"
                                         } else {
                                             searchDestination(newValue)
                                         }
@@ -1222,6 +984,24 @@ fun HomeScreen() {
                                             text = if (activeBookingId != null) "Booking in progress..." else "Type destination or long-press map...",
                                             color = slate400
                                         )
+                                    },
+                                    trailingIcon = {
+                                        if (dropoffInput.isNotEmpty() && activeBookingId == null) {
+                                            IconButton(onClick = {
+                                                dropoffInput = ""
+                                                dropoffLat = 0.0
+                                                dropoffLng = 0.0
+                                                selectedDropoffAddress = ""
+                                                suggestions = emptyList()
+                                                statusMessage = "Long-press on the map to pin your destination!"
+                                            }) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Clear",
+                                                    tint = slate400
+                                                )
+                                            }
+                                        }
                                     },
                                     modifier = Modifier.fillMaxWidth(),
                                     singleLine = true,
@@ -1234,56 +1014,78 @@ fun HomeScreen() {
                                     )
                                 )
 
-                                // Suggestion Dropdown List
-                                if (suggestions.isNotEmpty()) {
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Card(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = CardDefaults.cardColors(containerColor = slate900),
-                                        border = BorderStroke(1.dp, slate700)
+
+                                // Live suggestion list — renders inline below the field
+                                AnimatedVisibility(
+                                    visible = suggestions.isNotEmpty() && activeBookingId == null,
+                                    enter = fadeIn() + expandVertically(),
+                                    exit = fadeOut() + shrinkVertically()
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
+                                            .background(slate800)
+                                            .border(
+                                                width = 1.dp,
+                                                color = slate700,
+                                                shape = RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
+                                            )
                                     ) {
-                                        Column(modifier = Modifier.fillMaxWidth()) {
-                                            suggestions.forEach { suggestion ->
-                                                DropdownMenuItem(
-                                                    text = {
-                                                        Text(
-                                                            text = suggestion.displayName,
-                                                            color = Color.White,
-                                                            maxLines = 1,
-                                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                                        )
-                                                    },
-                                                    onClick = {
+                                        suggestions.forEachIndexed { index, suggestion ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
                                                         dropoffLat = suggestion.latitude
                                                         dropoffLng = suggestion.longitude
                                                         selectedDropoffAddress = suggestion.displayName
                                                         dropoffInput = suggestion.displayName
                                                         suggestions = emptyList()
-                                                        statusMessage = "Destination set from search suggestion!"
-
+                                                        sharedPrefs.edit()
+                                                            .putFloat("saved_dropoff_lat", suggestion.latitude.toFloat())
+                                                            .putFloat("saved_dropoff_lng", suggestion.longitude.toFloat())
+                                                            .putString("saved_dropoff_address", suggestion.displayName)
+                                                            .apply()
                                                         updateTripDetails(pickupLat, pickupLng, suggestion.latitude, suggestion.longitude)
-
-                                                        nativeMapInstance?.let { map ->
-                                                            dropoffMarker?.let { map.removeMarker(it) }
-
-                                                            val targetLatLng = LatLng(suggestion.latitude, suggestion.longitude)
-                                                            dropoffMarker = map.addMarker(
-                                                                MarkerOptions()
-                                                                    .position(targetLatLng)
-                                                                    .title("Target Destination")
-                                                                    .snippet(suggestion.displayName)
-                                                            )
-
-                                                            map.animateCamera(
-                                                                newLatLngZoom(targetLatLng, 15.0)
+                                                        scope.launch {
+                                                            cameraPositionState.animate(
+                                                                CameraUpdateFactory.newLatLngZoom(
+                                                                    LatLng(suggestion.latitude, suggestion.longitude), 22f
+                                                                )
                                                             )
                                                         }
+                                                        statusMessage = "Destination set!"
                                                     }
+                                                    .background(
+                                                        if (index % 2 == 0) slate800 else slate700.copy(alpha = 0.2f)
+                                                    )
+                                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.LocationOn,
+                                                    contentDescription = null,
+                                                    tint = emerald400,
+                                                    modifier = Modifier.size(16.dp)
                                                 )
+                                                Text(
+                                                    text = suggestion.displayName,
+                                                    color = Color.White,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+
+                                            if (index < suggestions.size - 1) {
+                                                HorizontalDivider(color = slate700.copy(alpha = 0.5f), thickness = 0.5.dp)
                                             }
                                         }
                                     }
                                 }
+
                             }
                         }
 
@@ -1303,7 +1105,11 @@ fun HomeScreen() {
                                     val context = LocalContext.current
                                     when (bookingStatus) {
                                         "pending" -> {
-                                            CircularProgressIndicator(modifier = Modifier.size(32.dp), color = emerald400, strokeWidth = 3.dp)
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(32.dp),
+                                                color = emerald400,
+                                                strokeWidth = 3.dp
+                                            )
                                             Spacer(modifier = Modifier.height(12.dp))
                                             Text(
                                                 text = "Waiting for Confirmation...",
@@ -1326,66 +1132,43 @@ fun HomeScreen() {
                                                             val currentBookingId = activeBookingId
 
                                                             if (!currentBookingId.isNullOrEmpty()) {
-                                                                SupabaseClient.client.from("bookings").delete {
-                                                                    filter {
-                                                                        eq("id", currentBookingId)
-                                                                        eq("status", "pending")
+                                                                SupabaseClient.client.from("bookings")
+                                                                    .delete {
+                                                                        filter {
+                                                                            eq(
+                                                                                "id",
+                                                                                currentBookingId
+                                                                            )
+                                                                            eq("status", "pending")
+                                                                        }
                                                                     }
-                                                                }
                                                             }
                                                         } catch (e: Exception) {
-                                                            Log.e("RideGoCancel", "Failed to delete booking row", e)
+                                                            Log.e(
+                                                                "RideGoCancel",
+                                                                "Failed to delete booking row",
+                                                                e
+                                                            )
                                                         } finally {
-                                                            sharedPrefs.edit()
-                                                                .remove("active_booking_id")
-                                                                .remove("saved_dropoff_lat")
-                                                                .remove("saved_dropoff_lng")
-                                                                .remove("saved_dropoff_address")
-                                                                .remove("saved_pickup_address")
-                                                                .remove("saved_pickup_lat")
-                                                                .remove("saved_pickup_lng")
-                                                                .remove("saved_trip_distance")
-                                                                .remove("saved_estimated_fare")
-                                                                .apply()
-                                                            activeBookingId = null
-                                                            bookingStatus = null
-                                                            currentRiderId = null
-
-                                                            nativeMapInstance?.let { map ->
-                                                                riderVehicleMarker?.let { map.removeMarker(it); riderVehicleMarker = null }
-                                                                dropoffMarker?.let { map.removeMarker(it); dropoffMarker = null }
-                                                                pickupMarker?.let { map.removeMarker(it); pickupMarker = null }
-                                                            }
-
+                                                            clearBookingState()
                                                             Toast.makeText(
                                                                 context,
-                                                                "Booking has been Cancelled.",
+                                                                "Booking cancelled.",
                                                                 Toast.LENGTH_LONG
                                                             ).show()
-
-                                                            // Reset states
-                                                            estimatedFare = 0.0
-                                                            tripDistance = 0.0
-                                                            dropoffLat = 0.0
-                                                            dropoffLng = 0.0
-                                                            pickupLat = 0.0
-                                                            pickupLng = 0.0
-                                                            selectedDropoffAddress = ""
-                                                            dropoffInput = ""
-                                                            suggestions = emptyList()
-                                                            driverName = ""
-                                                            driverPhone = ""
-                                                            success = null
-                                                            statusMessage = "Hold/Long-press on the map to pin your destination!"
-
                                                             fetchCurrentGPSLocation()
                                                         }
                                                     }
                                                 }
                                             ) {
-                                                Text(text = "Cancel Booking Request", color = rose400, style = MaterialTheme.typography.labelMedium)
+                                                Text(
+                                                    text = "Cancel Booking Request",
+                                                    color = rose400,
+                                                    style = MaterialTheme.typography.labelMedium
+                                                )
                                             }
                                         }
+
                                         "accepted" -> {
                                             Text(
                                                 text = "🚖 Rider Dispatched!",
@@ -1397,25 +1180,51 @@ fun HomeScreen() {
                                             HorizontalDivider(color = slate800)
                                             Spacer(modifier = Modifier.height(8.dp))
 
-                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                Text(text = "Rider Assigned:", color = slate400, style = MaterialTheme.typography.bodyMedium)
-                                                Text(text = driverName.ifEmpty { "Rider Found" }, color = Color.White, fontWeight = FontWeight.SemiBold)
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    text = "Rider Assigned:",
+                                                    color = slate400,
+                                                    style = MaterialTheme.typography.bodyMedium
+                                                )
+                                                Text(
+                                                    text = driverName.ifEmpty { "Rider Found" },
+                                                    color = Color.White,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
                                             }
                                             Spacer(modifier = Modifier.height(4.dp))
-                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                Text(text = "Contact Number:", color = slate400, style = MaterialTheme.typography.bodyMedium)
-                                                Text(text = driverPhone.ifEmpty { "Updating..." }, color = Color.White, fontWeight = FontWeight.SemiBold)
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    text = "Contact Number:",
+                                                    color = slate400,
+                                                    style = MaterialTheme.typography.bodyMedium
+                                                )
+                                                Text(
+                                                    text = driverPhone.ifEmpty { "Updating..." },
+                                                    color = Color.White,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
                                             }
 
                                             Spacer(modifier = Modifier.height(12.dp))
 
                                             Card(
                                                 modifier = Modifier.fillMaxWidth(),
-                                                colors = CardDefaults.cardColors(containerColor = indigo600.copy(alpha = 0.2f)),
+                                                colors = CardDefaults.cardColors(
+                                                    containerColor = indigo600.copy(
+                                                        alpha = 0.2f
+                                                    )
+                                                ),
                                                 shape = RoundedCornerShape(6.dp)
                                             ) {
                                                 Text(
-                                                    text = "📞 Note: The rider will call you to confirm your exact picking location coordinates.",
+                                                    text = "📞 Note: The rider will call you to confirm your exact pickup location.",
                                                     color = Color.White,
                                                     style = MaterialTheme.typography.labelSmall,
                                                     modifier = Modifier.padding(8.dp),
@@ -1425,7 +1234,6 @@ fun HomeScreen() {
 
                                             Spacer(modifier = Modifier.height(16.dp))
 
-                                            // Payment Options
                                             Text(
                                                 text = "Select Payment Method to Complete Ride:",
                                                 color = slate400,
@@ -1437,16 +1245,14 @@ fun HomeScreen() {
                                                 modifier = Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                                             ) {
-                                                // Cash Button
                                                 Button(
                                                     onClick = {},
                                                     modifier = Modifier.weight(1f),
-                                                    colors = ButtonDefaults.buttonColors(containerColor = emerald600)
-                                                ) {
-                                                    Text("Cash")
-                                                }
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = emerald600
+                                                    )
+                                                ) { Text("Cash") }
 
-                                                // GCash Button
                                                 Button(
                                                     onClick = {
                                                         scope.launch {
@@ -1455,70 +1261,60 @@ fun HomeScreen() {
                                                                 activeBookingId?.let { bookingId ->
                                                                     NetworkQuality.timed {
                                                                         withTimeout(10000) {
-                                                                            SupabaseClient.client.from("bookings").update(
-                                                                                mapOf("status" to "completed", "updated_at" to isoTimestamp)
-                                                                            ) { filter { eq("id", bookingId) } }
+                                                                            SupabaseClient.client.from(
+                                                                                "bookings"
+                                                                            ).update(
+                                                                                mapOf(
+                                                                                    "status" to "completed",
+                                                                                    "updated_at" to isoTimestamp
+                                                                                )
+                                                                            ) {
+                                                                                filter {
+                                                                                    eq(
+                                                                                        "id",
+                                                                                        bookingId
+                                                                                    )
+                                                                                }
+                                                                            }
                                                                         }
                                                                     }
                                                                     updateSucceeded = true
                                                                 }
                                                             } catch (e: TimeoutCancellationException) {
-                                                                Log.e("RideGo", "Failed to clear booking", e)
-                                                                Toast.makeText(context, "Connection too slow to confirm completion. Please check your connection and try again.", Toast.LENGTH_LONG).show()
-                                                            } catch (e: Exception) {
-                                                                Log.e("RideGo", "Failed to clear booking", e)
-                                                                Toast.makeText(context, "Couldn't reach the server. Please try again.", Toast.LENGTH_LONG).show()
-                                                            }
-
-                                                            if (updateSucceeded) {
-                                                                sharedPrefs.edit()
-                                                                    .remove("active_booking_id")
-                                                                    .remove("saved_dropoff_lat")
-                                                                    .remove("saved_dropoff_lng")
-                                                                    .remove("saved_dropoff_address")
-                                                                    .remove("saved_pickup_address")
-                                                                    .remove("saved_pickup_lat")
-                                                                    .remove("saved_pickup_lng")
-                                                                    .remove("saved_trip_distance")
-                                                                    .remove("saved_estimated_fare")
-                                                                    .apply()
-                                                                activeBookingId = null
-                                                                bookingStatus = null
-                                                                currentRiderId = null
-
-                                                                nativeMapInstance?.let { map ->
-                                                                    riderVehicleMarker?.let { map.removeMarker(it); riderVehicleMarker = null }
-                                                                    dropoffMarker?.let { map.removeMarker(it); dropoffMarker = null }
-                                                                    pickupMarker?.let { map.removeMarker(it); pickupMarker = null }
-                                                                }
-
                                                                 Toast.makeText(
                                                                     context,
-                                                                    "Ride completed! Collected ₱${String.format("%.2f", estimatedFare)} via Gcash.",
+                                                                    "Connection too slow. Please try again.",
                                                                     Toast.LENGTH_LONG
                                                                 ).show()
-
-                                                                // Reset states
-                                                                estimatedFare = 0.0
-                                                                tripDistance = 0.0
-                                                                dropoffLat = 0.0
-                                                                dropoffLng = 0.0
-                                                                pickupLat = 0.0
-                                                                pickupLng = 0.0
-                                                                selectedDropoffAddress = ""
-                                                                dropoffInput = ""
-                                                                suggestions = emptyList()
-
+                                                            } catch (e: Exception) {
+                                                                Toast.makeText(
+                                                                    context,
+                                                                    "Couldn't reach server. Please try again.",
+                                                                    Toast.LENGTH_LONG
+                                                                ).show()
+                                                            }
+                                                            if (updateSucceeded) {
+                                                                val fare = estimatedFare
+                                                                clearBookingState()
+                                                                Toast.makeText(
+                                                                    context,
+                                                                    "Ride completed! ₱${
+                                                                        String.format(
+                                                                            "%.2f",
+                                                                            fare
+                                                                        )
+                                                                    } via GCash.",
+                                                                    Toast.LENGTH_LONG
+                                                                ).show()
                                                                 fetchCurrentGPSLocation()
                                                             }
                                                         }
                                                     },
                                                     modifier = Modifier.weight(1f),
-                                                    enabled = true,
-                                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0052FF))
-                                                ) {
-                                                    Text("GCash")
-                                                }
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = Color(0xFF0052FF)
+                                                    )
+                                                ) { Text("GCash") }
                                             }
 
                                             Spacer(modifier = Modifier.height(8.dp))
@@ -1529,9 +1325,6 @@ fun HomeScreen() {
                                             )
                                         }
                                     }
-
-                                    Spacer(modifier = Modifier.height(12.dp))
-
                                 }
                             }
                         } else {

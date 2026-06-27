@@ -30,7 +30,7 @@ fun NetworkStatusIndicator(
 
     val (icon, iconColor) = when {
         connectionType == ConnectionType.NONE ->
-            Icons.Default.CloudOff to Color(0xFFFB7185) // rose
+            Icons.Default.CloudOff to Color(0xFFFB7185)
         connectionType == ConnectionType.WIFI && quality == ConnectionQuality.VERY_SLOW ->
             Icons.Default.WifiOff to Color(0xFFFB7185)
         connectionType == ConnectionType.WIFI ->
@@ -61,10 +61,10 @@ fun NetworkStatusIndicator(
 }
 
 private fun qualityColor(quality: ConnectionQuality): Color = when (quality) {
-    ConnectionQuality.GOOD -> Color(0xFF34D399)      // emerald
-    ConnectionQuality.SLOW -> Color(0xFFFBBF24)      // amber
-    ConnectionQuality.VERY_SLOW -> Color(0xFFFB7185) // rose
-    ConnectionQuality.UNKNOWN -> Color(0xFF94A3B8)   // slate, neutral
+    ConnectionQuality.GOOD -> Color(0xFF34D399)
+    ConnectionQuality.SLOW -> Color(0xFFFBBF24)
+    ConnectionQuality.VERY_SLOW -> Color(0xFFFB7185)
+    ConnectionQuality.UNKNOWN -> Color(0xFF94A3B8)
 }
 
 private fun statusLabel(type: ConnectionType, quality: ConnectionQuality): String? {

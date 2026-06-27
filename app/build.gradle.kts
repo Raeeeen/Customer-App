@@ -8,6 +8,12 @@ plugins {
     kotlin("plugin.serialization") version "2.0.0"
 }
 
+val properties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    properties.load(FileInputStream(localPropertiesFile))
+}
+
 android {
     namespace = "com.cassey.customerapp"
     compileSdk {
@@ -23,20 +29,15 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-
-        val properties = Properties()
-        val localPropertiesFile = rootProject.file("local.properties")
-        if (localPropertiesFile.exists()) {
-            properties.load(FileInputStream(localPropertiesFile))
-        }
-
         val supabaseUrl = properties.getProperty("SUPABASE_URL") ?: "\"\""
         val supabaseKey = properties.getProperty("SUPABASE_ANON_KEY") ?: "\"\""
-        val maptilerApikey = properties.getProperty("MAPTILER_API_KEY") ?: "\"\""
+        val mapsApikey = properties.getProperty("MAPS_API_KEY") ?: "\"\""
 
         buildConfigField("String", "SUPABASE_URL", supabaseUrl)
         buildConfigField("String", "SUPABASE_ANON_KEY", supabaseKey)
-        buildConfigField("String", "MAPTILER_API_KEY", maptilerApikey)
+        buildConfigField("String", "MAPS_API_KEY", "\"$mapsApikey\"")
+
+        manifestPlaceholders["MAPS_API_KEY"] = mapsApikey
     }
 
     buildTypes {
@@ -67,6 +68,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.animation)
+    implementation(libs.androidx.compose.foundation)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -82,9 +85,11 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     implementation("com.google.android.gms:play-services-location:21.3.0")
-    implementation("org.maplibre.gl:android-sdk:11.0.0")
     implementation("io.github.jan-tennert.supabase:realtime-kt:3.6.0")
     implementation("io.ktor:ktor-client-websockets:3.0.1")
     implementation("io.ktor:ktor-client-okhttp:3.0.1")
+    implementation("com.google.maps.android:maps-compose:6.2.1")
+    implementation("com.google.android.gms:play-services-maps:19.0.0")
+    implementation("io.github.jan-tennert.supabase:functions-kt:3.6.0")
 
 }

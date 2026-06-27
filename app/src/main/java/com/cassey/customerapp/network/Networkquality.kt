@@ -26,7 +26,7 @@ enum class ConnectionQuality {
 
 private const val GOOD_THRESHOLD_MS = 1500L
 private const val SLOW_THRESHOLD_MS = 4000L
-private const val SAMPLE_WINDOW = 5 // how many recent call timings to average over
+private const val SAMPLE_WINDOW = 5
 
 object NetworkQuality {
 
