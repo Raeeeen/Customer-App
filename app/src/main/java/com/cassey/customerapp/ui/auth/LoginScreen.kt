@@ -1,5 +1,6 @@
 package com.cassey.customerapp.ui.auth
 
+import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -30,6 +31,16 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.postgrest
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
+import android.provider.Settings
+import androidx.annotation.RequiresApi
+import androidx.compose.ui.platform.LocalContext
+import io.github.jan.supabase.auth.providers.builtin.Phone
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import io.github.jan.supabase.postgrest.rpc
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import com.cassey.customerapp.ui.navigation.PasswordResetFlag
 
 @Serializable
 data class Profile(
@@ -43,7 +54,7 @@ data class Profile(
 private fun getFriendlyErrorMessage(rawError: String): String {
     val lower = rawError.lowercase()
     return when {
-        lower.contains("invalid") && lower.contains("credential") -> "The OTP code you entered is incorrect."
+        lower.contains("invalid") && lower.contains("credential") -> "Incorrect phone number or password."
         lower.contains("otp") && lower.contains("expired") -> "Your OTP code has expired."
         lower.contains("network") || lower.contains("timeout") -> "Connection issue. Check your internet."
         lower.contains("rate limit") || lower.contains("too many requests") -> "Too many attempts. Try again later."
@@ -52,6 +63,7 @@ private fun getFriendlyErrorMessage(rawError: String): String {
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun LoginScreen(
     onLoginSuccess: () -> Unit
@@ -60,16 +72,21 @@ fun LoginScreen(
     var step by remember { mutableStateOf("PHONE") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-
+    var password by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
     var otp by remember { mutableStateOf("") }
-
+    var newPassword by remember { mutableStateOf("") }
     val formattedPhone = phone.filter { it.isDigit() }.let {
         when {
             it.startsWith("0") -> "+63${it.drop(1)}"
             else -> "+63$it"
         }
+    }
+    val context = LocalContext.current
+    var passwordVisible by remember { mutableStateOf(false) }
+    val deviceId = remember {
+        Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "unknown-device"
     }
 
     fun sendSupabaseOtp(onSuccess: () -> Unit) {
@@ -147,10 +164,8 @@ fun LoginScreen(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Smooth offset spacing to separate the text from overlaying the card elements
             Spacer(modifier = Modifier.height(90.dp))
 
-            // Premium Action Card Panel
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -169,6 +184,9 @@ fun LoginScreen(
                                 text = when(step) {
                                     "PHONE" -> "Welcome Back"
                                     "SIGNUP" -> "Create Account"
+                                    "LOGIN_PASSWORD" -> "Enter Password"
+                                    "FORGOT_OTP" -> "Reset Password"
+                                    "FORGOT_NEW_PASS" -> "New Password"
                                     else -> "Verify Identity"
                                 },
                                 fontSize = 20.sp,
@@ -179,6 +197,9 @@ fun LoginScreen(
                                 text = when(step) {
                                     "PHONE" -> "Enter your mobile number to begin."
                                     "SIGNUP" -> "Tell us your legal full name."
+                                    "LOGIN_PASSWORD" -> "Enter your password to continue."
+                                    "FORGOT_OTP" -> "Enter the code sent to your phone."
+                                    "FORGOT_NEW_PASS" -> "Choose a new password."
                                     else -> "Enter the code sent to your phone."
                                 },
                                 fontSize = 13.sp,
@@ -192,6 +213,7 @@ fun LoginScreen(
                                     error = null
                                     step = "PHONE"
                                     otp = ""
+                                    newPassword = ""
                                 },
                                 modifier = Modifier
                                     .size(40.dp)
@@ -224,7 +246,7 @@ fun LoginScreen(
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = com.cassey.customerapp.ui.auth.getFriendlyErrorMessage(
+                                text = getFriendlyErrorMessage(
                                     rawErrorString
                                 ),
                                 color = Color(0xFF991B1B),
@@ -255,11 +277,8 @@ fun LoginScreen(
                                 placeholder = { Text("09XXXXXXXXX") },
                                 singleLine = true,
                                 colors = OutlinedTextFieldDefaults.colors(
-                                    // Add these two lines for the text color:
                                     focusedTextColor = Color.Black,
                                     unfocusedTextColor = Color.Black,
-
-                                    // Your existing color configurations:
                                     focusedBorderColor = Color(0xFF00B14F),
                                     focusedLabelColor = Color(0xFF00B14F),
                                     unfocusedBorderColor = Color(0xFFE5E7EB)
@@ -278,17 +297,13 @@ fun LoginScreen(
                                         loading = true
                                         error = null
                                         try {
-                                            val profile = SupabaseClient.client
-                                                .postgrest["profiles"]
-                                                .select { filter { eq("phone_number", formattedPhone) } }
-                                                .decodeSingleOrNull<com.cassey.customerapp.ui.auth.Profile>()
+                                            val isRegistered = SupabaseClient.client.postgrest.rpc(
+                                                "phone_is_registered",
+                                                mapOf("check_phone" to formattedPhone)
+                                            ).decodeAs<Boolean>()
 
-                                            if (profile == null) {
-                                                step = "SIGNUP"
-                                                loading = false
-                                            } else {
-                                                sendSupabaseOtp { step = "OTP" }
-                                            }
+                                            step = if (isRegistered) "LOGIN_PASSWORD" else "SIGNUP"
+                                            loading = false
                                         } catch (e: Exception) {
                                             error = e.message
                                             loading = false
@@ -320,22 +335,58 @@ fun LoginScreen(
                                 label = { Text("Full Name") },
                                 singleLine = true,
                                 colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.Black,
+                                    unfocusedTextColor = Color.Black,
                                     focusedBorderColor = Color(0xFF00B14F),
                                     focusedLabelColor = Color(0xFF00B14F),
                                     unfocusedBorderColor = Color(0xFFE5E7EB)
                                 ),
                                 modifier = Modifier.fillMaxWidth()
                             )
+
+                            OutlinedTextField(
+                                value = password,
+                                onValueChange = {
+                                    password = it
+                                    if (error != null) error = null
+                                },
+                                label = { Text("Create Password") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.Black,
+                                    unfocusedTextColor = Color.Black,
+                                    focusedBorderColor = Color(0xFF00B14F),
+                                    focusedLabelColor = Color(0xFF00B14F),
+                                    unfocusedBorderColor = Color(0xFFE5E7EB)
+                                ),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+
                             Spacer(modifier = Modifier.height(20.dp))
                             Button(
                                 modifier = Modifier.fillMaxWidth().height(52.dp),
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00B14F)),
-                                enabled = (name.trim().isNotEmpty() && !loading),
+                                enabled = (name.trim().isNotEmpty() && password.length >= 6 && !loading),
                                 onClick = {
-                                    loading = true
-                                    error = null
-                                    sendSupabaseOtp { step = "OTP" }
+                                    scope.launch {
+                                        loading = true
+                                        error = null
+                                        try {
+                                            SupabaseClient.client.auth.signUpWith(Phone) {
+                                                this.phone = formattedPhone
+                                                this.password = password
+                                            }
+                                            step = "OTP"
+                                        } catch (e: Exception) {
+                                            error = e.message
+                                        } finally {
+                                            loading = false
+                                        }
+                                    }
                                 }
                             ) {
                                 if (loading) {
@@ -343,6 +394,210 @@ fun LoginScreen(
                                 } else {
                                     Text("Register Profile", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                 }
+                            }
+                        }
+                    }
+
+                    AnimatedVisibility(
+                        visible = (step == "LOGIN_PASSWORD"),
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
+                        Column {
+
+                            OutlinedTextField(
+                                value = password,
+                                onValueChange = {
+                                    password = it
+                                    if (error != null) error = null
+                                },
+                                label = { Text("Password") },
+                                singleLine = true,
+                                visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                trailingIcon = {
+                                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                        Icon(
+                                            imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                            contentDescription = if (passwordVisible) "Hide password" else "Show password",
+                                            tint = Color(0xFF6B7280)
+                                        )
+                                    }
+                                },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.Black,
+                                    unfocusedTextColor = Color.Black,
+                                    focusedBorderColor = Color(0xFF00B14F),
+                                    focusedLabelColor = Color(0xFF00B14F),
+                                    unfocusedBorderColor = Color(0xFFE5E7EB)
+                                ),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(20.dp))
+
+                            Spacer(modifier = Modifier.height(16.dp))
+                            TextButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    scope.launch {
+                                        loading = true
+                                        error = null
+                                        try {
+                                            SupabaseClient.client.auth.signInWith(OTP) {
+                                                this.phone = formattedPhone
+                                            }
+                                            otp = ""
+                                            step = "FORGOT_OTP"
+                                        } catch (e: Exception) {
+                                            error = e.message
+                                        } finally {
+                                            loading = false
+                                        }
+                                    }
+                                }
+                            ) {
+                                Text("Forgot Password?", color = Color(0xFF00B14F), fontWeight = FontWeight.Bold)
+                            }
+
+                            Button(
+                                modifier = Modifier.fillMaxWidth().height(52.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00B14F)),
+                                enabled = (password.isNotEmpty() && !loading),
+                                onClick = {
+                                    scope.launch {
+                                        loading = true
+                                        error = null
+                                        try {
+                                            SupabaseClient.client.auth.signInWith(Phone) {
+                                                this.phone = formattedPhone
+                                                this.password = password
+                                            }
+
+                                            val currentUser = SupabaseClient.client.auth.currentUserOrNull()
+                                            if (currentUser != null) {
+                                                val allowed = SupabaseClient.client.postgrest.rpc(
+                                                    "check_device_binding",
+                                                    mapOf(
+                                                        "user_id" to currentUser.id,
+                                                        "requesting_device_id" to deviceId
+                                                    )
+                                                ).decodeAs<Boolean>()
+
+                                                if (!allowed) {
+                                                    SupabaseClient.client.auth.signOut()
+                                                    error = "This account is already logged in on another device."
+                                                    loading = false
+                                                    return@launch
+                                                }
+
+                                                SupabaseClient.client.postgrest["profiles"].upsert(
+                                                    mapOf(
+                                                        "id" to currentUser.id,
+                                                        "bound_device_id" to deviceId,
+                                                        "bound_at" to java.time.Instant.now().toString()
+                                                    )
+                                                ) { onConflict = "id" }
+                                            }
+
+                                            onLoginSuccess()
+                                        } catch (e: Exception) {
+                                            error = e.message
+                                        } finally {
+                                            loading = false
+                                        }
+                                    }
+                                }
+
+
+                            ) {
+                                if (loading) {
+                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                                } else {
+                                    Text("Log In", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    AnimatedVisibility(
+                        visible = (step == "FORGOT_OTP"),
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
+                        Column {
+                            OutlinedTextField(
+                                value = otp,
+                                onValueChange = {
+                                    otp = it.filter { digit -> digit.isDigit() }
+                                    if (error != null) error = null
+                                },
+                                label = { Text("6-Digit Code") },
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.Black,
+                                    unfocusedTextColor = Color.Black,
+                                    focusedBorderColor = Color(0xFF00B14F),
+                                    focusedLabelColor = Color(0xFF00B14F),
+                                    unfocusedBorderColor = Color(0xFFE5E7EB)
+                                ),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(20.dp))
+                            Button(
+                                modifier = Modifier.fillMaxWidth().height(52.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00B14F)),
+                                enabled = (otp.isNotEmpty() && !loading),
+                                onClick = {
+                                    scope.launch {
+                                        loading = true
+                                        error = null
+                                        try {
+                                            SupabaseClient.client.auth.verifyPhoneOtp(
+                                                type = OtpType.Phone.SMS,
+                                                phone = formattedPhone,
+                                                token = otp
+                                            )
+                                            PasswordResetFlag.set(context, true)
+                                            otp = ""
+                                        } catch (e: Exception) {
+                                            error = e.message
+                                        } finally {
+                                            loading = false
+                                        }
+                                    }
+                                }
+                            ) {
+                                if (loading) {
+                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                                } else {
+                                    Text("Verify Code", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+                            TextButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    scope.launch {
+                                        loading = true
+                                        error = null
+                                        try {
+                                            SupabaseClient.client.auth.signInWith(OTP) {
+                                                this.phone = formattedPhone
+                                            }
+                                            error = "Verification code resent."
+                                        } catch (e: Exception) {
+                                            error = e.message
+                                        } finally {
+                                            loading = false
+                                        }
+                                    }
+                                }
+                            ) {
+                                Text("Resend Verification Code", color = Color(0xFF00B14F), fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -388,7 +643,7 @@ fun LoginScreen(
                                                 phone = formattedPhone,
                                                 token = otp
                                             )
-                                            handleDatabaseAndFinish(name, formattedPhone, onLoginSuccess)
+                                            handleDatabaseAndFinish(name, formattedPhone, deviceId, onLoginSuccess)
                                         } catch (e: Exception) {
                                             error = e.message
                                         } finally {
@@ -416,15 +671,76 @@ fun LoginScreen(
                             }
                         }
                     }
+
+                    AnimatedVisibility(
+                        visible = (step == "FORGOT_NEW_PASS"),
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
+                        Column {
+                            OutlinedTextField(
+                                value = newPassword,
+                                onValueChange = {
+                                    newPassword = it
+                                    if (error != null) error = null
+                                },
+                                label = { Text("New Password") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.Black,
+                                    unfocusedTextColor = Color.Black,
+                                    focusedBorderColor = Color(0xFF00B14F),
+                                    focusedLabelColor = Color(0xFF00B14F),
+                                    unfocusedBorderColor = Color(0xFFE5E7EB)
+                                ),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(20.dp))
+                            Button(
+                                modifier = Modifier.fillMaxWidth().height(52.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00B14F)),
+                                enabled = (newPassword.length >= 6 && !loading),
+                                onClick = {
+                                    scope.launch {
+                                        loading = true
+                                        error = null
+                                        try {
+                                            SupabaseClient.client.auth.updateUser {
+                                                password = newPassword
+                                            }
+                                            onLoginSuccess()
+                                        } catch (e: Exception) {
+                                            error = e.message
+                                        } finally {
+                                            loading = false
+                                        }
+                                    }
+                                }
+                            ) {
+                                if (loading) {
+                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                                } else {
+                                    Text("Set New Password", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                }
+                            }
+                        }
+                    }
+
+
                 }
             }
         }
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 private suspend fun handleDatabaseAndFinish(
     name: String,
     formattedPhone: String,
+    deviceId: String,
     onLoginSuccess: () -> Unit
 ) {
     val currentUser = SupabaseClient.client.auth.currentUserOrNull()
@@ -436,7 +752,9 @@ private suspend fun handleDatabaseAndFinish(
                         "id" to currentUser.id,
                         "name" to name,
                         "phone_number" to formattedPhone,
-                        "role" to "customer"
+                        "role" to "customer",
+                        "bound_device_id" to deviceId,
+                        "bound_at" to java.time.Instant.now().toString()
                     )
                 )
             } else {
@@ -444,7 +762,9 @@ private suspend fun handleDatabaseAndFinish(
                     mapOf(
                         "id" to currentUser.id,
                         "phone_number" to formattedPhone,
-                        "role" to "customer"
+                        "role" to "customer",
+                        "bound_device_id" to deviceId,
+                        "bound_at" to java.time.Instant.now().toString()
                     )
                 ) {
                     onConflict = "id"
