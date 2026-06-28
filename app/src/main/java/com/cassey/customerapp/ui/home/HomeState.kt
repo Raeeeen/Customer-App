@@ -68,8 +68,8 @@ class HomeState(sharedPrefs: android.content.SharedPreferences) {
         tripDistance = 0.0
         dropoffLat = 0.0
         dropoffLng = 0.0
-        pickupLat = 0.0
-        pickupLng = 0.0
+        pickupLat = 7.8285
+        pickupLng = 123.4332
         selectedDropoffAddress = ""
         dropoffInput = ""
         suggestions = emptyList()
