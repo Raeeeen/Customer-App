@@ -87,7 +87,8 @@ fun HomeScreen() {
             cameraPositionState = cameraPositionState,
             onStatusMessage = { state.statusMessage = it },
             onPickupLatLng = { lat, lng -> state.pickupLat = lat; state.pickupLng = lng },
-            onReverseGeocode = ::doReverseGeocode
+            onReverseGeocode = ::doReverseGeocode,
+            onGpsReadyChanged = { state.isPickupGpsReady = it }
         )
     }
 
