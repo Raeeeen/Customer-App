@@ -3,6 +3,7 @@ package com.cassey.customerapp.ui.home
 import android.annotation.SuppressLint
 import android.content.Context
 import android.location.Geocoder
+import android.location.Location
 import android.util.Log
 import com.cassey.customerapp.data.SupabaseClient
 import com.cassey.customerapp.network.NetworkQuality
@@ -16,8 +17,10 @@ import io.github.jan.supabase.postgrest.postgrest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
@@ -68,32 +71,59 @@ fun fetchCurrentGPSLocation(
     cameraPositionState: CameraPositionState,
     onStatusMessage: (String) -> Unit,
     onPickupLatLng: (Double, Double) -> Unit,
-    onReverseGeocode: (Double, Double) -> Unit
+    onReverseGeocode: (Double, Double) -> Unit,
+    onGpsReadyChanged: (Boolean) -> Unit
 ) {
     if (activeBookingId != null) return
     onStatusMessage("Fetching precise GPS coordinates...")
-    fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-        .addOnSuccessListener { location ->
-            if (location != null) {
-                onPickupLatLng(location.latitude, location.longitude)
-                sharedPrefs.edit()
-                    .putFloat("saved_pickup_lat", location.latitude.toFloat())
-                    .putFloat("saved_pickup_lng", location.longitude.toFloat())
-                    .apply()
-                onReverseGeocode(location.latitude, location.longitude)
-                scope.launch {
+
+    scope.launch {
+        var attempt = 0
+        val maxAttempts = 6
+        var delayMs = 2000L
+
+        while (attempt < maxAttempts) {
+            attempt++
+            try {
+                val location = withTimeout(10000) {
+                    suspendCancellableCoroutine<Location?> { cont ->
+                        val task = fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+                        task.addOnSuccessListener { cont.resume(it) {} }
+                        task.addOnFailureListener { cont.resume(null) {} }
+                    }
+                }
+
+                if (location != null && location.accuracy <= 50f) {
+                    onPickupLatLng(location.latitude, location.longitude)
+                    sharedPrefs.edit()
+                        .putFloat("saved_pickup_lat", location.latitude.toFloat())
+                        .putFloat("saved_pickup_lng", location.longitude.toFloat())
+                        .apply()
+                    onReverseGeocode(location.latitude, location.longitude)
                     cameraPositionState.animate(
                         CameraUpdateFactory.newLatLngZoom(LatLng(location.latitude, location.longitude), 15f)
                     )
+                    onStatusMessage("GPS lock established. Long-press map to pin destination!")
+                    onGpsReadyChanged(true)
+                    return@launch
+                } else if (location != null) {
+                    Log.d("CustomerApp", "Rejected low-accuracy fix: ${location.accuracy}m")
                 }
-                onStatusMessage("GPS lock established. Long-press map to pin destination!")
+            } catch (e: TimeoutCancellationException) {
+
+            }
+
+            if (attempt < maxAttempts) {
+                onStatusMessage("Locating you...")
+                delay(delayMs)
+                delayMs = (delayMs * 1.8).toLong().coerceAtMost(30000L)
             } else {
-                onStatusMessage("Failed to lock GPS. Using Pagadian City center fallback.")
+                onStatusMessage("Couldn't get a precise location. Tap to try again.")
+                onGpsReadyChanged(false)
             }
         }
-        .addOnFailureListener {
-            onStatusMessage("GPS error: ${it.localizedMessage}")
-        }
+    }
+
 }
 
 suspend fun fetchDriverDetails(

@@ -294,7 +294,11 @@ fun HomeDashboard(
                 }
 
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !state.isPickupGpsReady && !state.loading) {
+                            onFetchGPS()
+                        },
                     colors = CardDefaults.cardColors(containerColor = statusBgColor),
                     shape = RoundedCornerShape(8.dp),
                     border = BorderStroke(1.dp, statusTextColor.copy(alpha = 0.3f))
@@ -312,7 +316,7 @@ fun HomeDashboard(
 
                 Button(
                     onClick = onConfirmBooking,
-                    enabled = !state.loading && state.dropoffLat != 0.0 && state.dropoffLng != 0.0,
+                    enabled = !state.loading && state.isPickupGpsReady && state.dropoffLat != 0.0 && state.dropoffLng != 0.0,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(
@@ -323,10 +327,11 @@ fun HomeDashboard(
                     if (state.loading) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
                     } else {
-                        val buttonText = if (state.dropoffLat == 0.0 || state.dropoffLng == 0.0)
-                            "Select a Destination to Book"
-                        else
-                            "Confirm Booking Request"
+                        val buttonText = when {
+                            !state.isPickupGpsReady -> "Waiting for Location lock (Please Wait)..."
+                            state.dropoffLat == 0.0 || state.dropoffLng == 0.0 -> "Select a Destination to Book"
+                            else -> "Confirm Booking Request"
+                        }
                         Text(
                             text = buttonText,
                             fontWeight = FontWeight.Bold,

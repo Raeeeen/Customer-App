@@ -48,6 +48,8 @@ class HomeState(sharedPrefs: android.content.SharedPreferences) {
     var isTermsReviewMode by mutableStateOf(false)
     var isCustomerRealtimeConnected by mutableStateOf(true)
 
+    var isPickupGpsReady by mutableStateOf(false)
+
     fun clear(sharedPrefs: android.content.SharedPreferences) {
         sharedPrefs.edit()
             .remove("active_booking_id")
@@ -62,6 +64,7 @@ class HomeState(sharedPrefs: android.content.SharedPreferences) {
             .apply()
         activeBookingId = null
         bookingStatus = null
+        isPickupGpsReady = false
         currentRiderId = null
         riderLatLng = null
         estimatedFare = 0.0
