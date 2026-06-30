@@ -70,7 +70,12 @@ fun NavGraph() {
                         .select {
                             filter { eq("id", userId) }
                         }
-                        .decodeSingle<Map<String, kotlinx.serialization.json.JsonElement>>()
+                        .decodeSingleOrNull<Map<String, kotlinx.serialization.json.JsonElement>>()
+
+                    if (profile == null) {
+                        SupabaseClient.client.auth.signOut()
+                        return@LaunchedEffect
+                    }
 
                     val boundDeviceId = profile["bound_device_id"]?.jsonPrimitive?.content
 
@@ -97,7 +102,12 @@ fun NavGraph() {
                     try {
                         val profile = SupabaseClient.client.postgrest["profiles"]
                             .select { filter { eq("id", userId) } }
-                            .decodeSingle<Map<String, kotlinx.serialization.json.JsonElement>>()
+                            .decodeSingleOrNull<Map<String, kotlinx.serialization.json.JsonElement>>()
+
+                        if (profile == null) {
+                            SupabaseClient.client.auth.signOut()
+                            break
+                        }
 
                         val boundDeviceId = profile["bound_device_id"]?.jsonPrimitive?.content
 
@@ -207,6 +217,11 @@ private fun DeviceWatcher(myDeviceId: String) {
         profileChannel.subscribe()
 
         profileFlow.collect { change ->
+            if (change is PostgresAction.Delete) {
+                SupabaseClient.client.auth.signOut()
+                return@collect
+            }
+
             if (change !is PostgresAction.Update) return@collect
 
             val rawValue = change.record["bound_device_id"]
