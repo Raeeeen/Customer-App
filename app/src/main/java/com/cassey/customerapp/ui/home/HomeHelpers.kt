@@ -61,6 +61,8 @@ fun reverseGeocodePickup(
     }
 }
 
+private var currentGpsJob: Job? = null
+
 @SuppressLint("MissingPermission")
 fun fetchCurrentGPSLocation(
     activeBookingId: String?,
@@ -75,7 +77,10 @@ fun fetchCurrentGPSLocation(
     onGpsReadyChanged: (Boolean) -> Unit
 ) {
     if (activeBookingId != null) return
-    onStatusMessage("Fetching precise GPS coordinates...")
+
+    if (currentGpsJob?.isActive == true) return
+
+    onStatusMessage("Fetching precise GPS coordinates... (Tap this to try again)")
 
     scope.launch {
         var attempt = 0
@@ -114,7 +119,7 @@ fun fetchCurrentGPSLocation(
             }
 
             if (attempt < maxAttempts) {
-                onStatusMessage("Locating you...")
+                onStatusMessage("Locating you... (Tap this to try again)")
                 delay(delayMs)
                 delayMs = (delayMs * 1.8).toLong().coerceAtMost(30000L)
             } else {
