@@ -643,7 +643,13 @@ fun LoginScreen(
                                                 phone = formattedPhone,
                                                 token = otp
                                             )
-                                            handleDatabaseAndFinish(name, formattedPhone, deviceId, onLoginSuccess)
+                                            handleDatabaseAndFinish(
+                                                name = name,
+                                                formattedPhone = formattedPhone,
+                                                deviceId = deviceId,
+                                                onLoginSuccess = onLoginSuccess,
+                                                onError = { msg -> error = msg }
+                                            )
                                         } catch (e: Exception) {
                                             error = e.message
                                         } finally {
@@ -741,39 +747,43 @@ private suspend fun handleDatabaseAndFinish(
     name: String,
     formattedPhone: String,
     deviceId: String,
-    onLoginSuccess: () -> Unit
+    onLoginSuccess: () -> Unit,
+    onError: (String) -> Unit
 ) {
     val currentUser = SupabaseClient.client.auth.currentUserOrNull()
-    if (currentUser != null) {
-        try {
-            if (name.isNotEmpty()) {
-                SupabaseClient.client.postgrest["profiles"].insert(
-                    mapOf(
-                        "id" to currentUser.id,
-                        "name" to name,
-                        "phone_number" to formattedPhone,
-                        "role" to "customer",
-                        "bound_device_id" to deviceId,
-                        "bound_at" to java.time.Instant.now().toString()
-                    )
+    if (currentUser == null) {
+        onError("Could not verify session after OTP confirmation. Please try again.")
+        return
+    }
+
+    try {
+        if (name.isNotEmpty()) {
+            SupabaseClient.client.postgrest["profiles"].insert(
+                mapOf(
+                    "id" to currentUser.id,
+                    "name" to name,
+                    "phone_number" to formattedPhone,
+                    "role" to "customer",
+                    "bound_device_id" to deviceId,
+                    "bound_at" to java.time.Instant.now().toString()
                 )
-            } else {
-                SupabaseClient.client.postgrest["profiles"].upsert(
-                    mapOf(
-                        "id" to currentUser.id,
-                        "phone_number" to formattedPhone,
-                        "role" to "customer",
-                        "bound_device_id" to deviceId,
-                        "bound_at" to java.time.Instant.now().toString()
-                    )
-                ) {
-                    onConflict = "id"
-                }
+            )
+        } else {
+            SupabaseClient.client.postgrest["profiles"].upsert(
+                mapOf(
+                    "id" to currentUser.id,
+                    "phone_number" to formattedPhone,
+                    "role" to "customer",
+                    "bound_device_id" to deviceId,
+                    "bound_at" to java.time.Instant.now().toString()
+                )
+            ) {
+                onConflict = "id"
             }
-            onLoginSuccess()
-        } catch (e: Exception) {
-            e.printStackTrace()
-            onLoginSuccess()
         }
+        onLoginSuccess()
+    } catch (e: Exception) {
+        e.printStackTrace()
+        onError(e.message ?: "Failed to create your profile. Please try again.")
     }
 }
