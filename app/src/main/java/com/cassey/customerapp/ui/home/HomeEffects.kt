@@ -1,11 +1,20 @@
 package com.cassey.customerapp.ui.home
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import android.widget.Toast
+import androidx.annotation.RequiresApi
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
 import com.cassey.customerapp.data.SupabaseClient
 import com.cassey.customerapp.network.NetworkQuality
 import com.google.android.gms.location.FusedLocationProviderClient
@@ -22,6 +31,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import com.google.android.gms.maps.model.LatLng
 import kotlin.math.*
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun HomeEffects(
     state: HomeState,
@@ -34,8 +44,20 @@ fun HomeEffects(
     onFetchGPS: () -> Unit,
     onReverseGeocode: (Double, Double) -> Unit,
     onTripUpdate: (distance: Double, fare: Double) -> Unit,
-    onClearBooking: () -> Unit
+    onClearBooking: () -> Unit,
 ) {
+
+    var showCompletedDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(showCompletedDialog) {
+        if (showCompletedDialog) {
+            delay(5000)
+            showCompletedDialog = false
+            onClearBooking()
+            onFetchGPS()
+        }
+    }
+
     // Request location permission on first launch
     LaunchedEffect(Unit) {
         if (state.activeBookingId != null) {
@@ -76,7 +98,12 @@ fun HomeEffects(
             if (snapshot != null) {
                 state.bookingStatus = snapshot.status
                 if (snapshot.status == "accepted" && snapshot.rider_id != null) {
+                    Log.d("Vibration", "Status changed to accepted, hasVibrated=${state.hasVibratedForAcceptance}")
                     state.currentRiderId = snapshot.rider_id
+                    if (!state.hasVibratedForAcceptance) {
+                        vibrateDevice(context)
+                        state.hasVibratedForAcceptance = true
+                    }
                     fetchDriverDetails(snapshot.rider_id) { name, phone ->
                         state.driverName = name
                         state.driverPhone = phone
@@ -99,6 +126,10 @@ fun HomeEffects(
             state.bookingStatus = updated.status
             if (updated.status == "accepted") {
                 state.currentRiderId = updated.rider_id
+                if (!state.hasVibratedForAcceptance) {
+                    vibrateDevice(context)
+                    state.hasVibratedForAcceptance = true
+                }
                 scope.launch {
                     fetchDriverDetails(updated.rider_id) { name, phone ->
                         state.driverName = name
@@ -107,9 +138,7 @@ fun HomeEffects(
                 }
             }
             if (updated.status in listOf("completed", "cancelled")) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "Your ride is complete!", Toast.LENGTH_LONG).show()
-                }
+                showCompletedDialog = true
                 withContext(NonCancellable) {
                     try { channel.unsubscribe(); SupabaseClient.client.realtime.removeChannel(channel) }
                     catch (e: Exception) { Log.e("Realtime", "Channel cleanup failed", e) }
@@ -217,8 +246,25 @@ fun HomeEffects(
 
     // Realtime connection status observer
     LaunchedEffect(Unit) {
+        var debounceJob: Job? = null
         SupabaseClient.client.realtime.status.collect { status ->
-            state.isCustomerRealtimeConnected = status == Realtime.Status.CONNECTED
+            debounceJob?.cancel()
+            if (status == Realtime.Status.CONNECTED) {
+                state.isCustomerRealtimeConnected = true
+            } else {
+                debounceJob = launch {
+                    delay(1500)
+                    state.isCustomerRealtimeConnected = false
+                }
+            }
+        }
+    }
+
+    // Auto-clear a stale error banner once connectivity returns
+    LaunchedEffect(state.isCustomerRealtimeConnected) {
+        if (state.isCustomerRealtimeConnected && state.success == false && state.activeBookingId == null) {
+            state.success = null
+            state.statusMessage = "Connection restored. Ready to book!"
         }
     }
 
@@ -234,5 +280,19 @@ fun HomeEffects(
                 }
             }
         }
+    }
+
+    if (showCompletedDialog) {
+        AlertDialog(
+            onDismissRequest = { /* ignore outside taps, let the timer close it */ },
+            title = { Text("Ride Completed!") },
+            text = {
+                Text("Your Ride is Completed by the Rider.\nThanks for riding with us!")
+            },
+            confirmButton = {},
+            containerColor = Color(0xFF0F172A),
+            titleContentColor = Color.White,
+            textContentColor = Color(0xFF94A3B8)
+        )
     }
 }

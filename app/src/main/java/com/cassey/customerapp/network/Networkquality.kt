@@ -89,11 +89,21 @@ object NetworkQuality {
         val network = cm?.activeNetwork
         val caps = network?.let { cm.getNetworkCapabilities(it) }
 
-        _connectionType.value = when {
+        val newType = when {
             caps == null -> ConnectionType.NONE
             caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> ConnectionType.WIFI
             caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> ConnectionType.CELLULAR
             else -> ConnectionType.OTHER
         }
+
+        if (newType != _connectionType.value) {
+            synchronized(recentLatenciesMs) {
+                recentLatenciesMs.clear()
+                lastTimeoutAtMs = 0L
+                _quality.value = ConnectionQuality.UNKNOWN
+            }
+        }
+
+        _connectionType.value = newType
     }
 }

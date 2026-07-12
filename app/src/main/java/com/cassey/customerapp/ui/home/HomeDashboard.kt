@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -81,12 +82,8 @@ fun HomeDashboard(
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
-                IconButton(onClick = onHideDashboard) {
-                    Icon(
-                        imageVector = Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Hide Dashboard",
-                        tint = Color.White
-                    )
+                TextButton(onClick = onHideDashboard) {
+                    Text(text = "Hide", color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
             }
 
@@ -142,6 +139,8 @@ fun HomeDashboard(
                                 state.dropoffLng = 0.0
                                 state.selectedDropoffAddress = ""
                                 state.suggestions = emptyList()
+                                state.tripDistance = 0.0
+                                state.estimatedFare = 0.0
                                 state.statusMessage = "Long-press on the map to pin your destination!"
                             } else {
                                 onSearchDestination(newValue)
@@ -163,6 +162,8 @@ fun HomeDashboard(
                                     state.dropoffLng = 0.0
                                     state.selectedDropoffAddress = ""
                                     state.suggestions = emptyList()
+                                    state.tripDistance = 0.0
+                                    state.estimatedFare = 0.0
                                     state.statusMessage = "Long-press on the map to pin your destination!"
                                 }) {
                                     Icon(
@@ -282,6 +283,10 @@ fun HomeDashboard(
                     onFetchGPS = onFetchGPS
                 )
             } else {
+                val staleFixThresholdMs = 60_000L
+                val isFixStale = state.lastFixTimestampMillis == 0L ||
+                        (System.currentTimeMillis() - state.lastFixTimestampMillis) > staleFixThresholdMs
+
                 val statusBgColor = when (state.success) {
                     true  -> emerald400.copy(alpha = 0.15f)
                     false -> rose400.copy(alpha = 0.15f)
@@ -296,7 +301,7 @@ fun HomeDashboard(
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(enabled = !state.isPickupGpsReady && !state.loading) {
+                        .clickable(enabled = (!state.isPickupGpsReady || isFixStale) && !state.loading) {
                             onFetchGPS()
                         },
                     colors = CardDefaults.cardColors(containerColor = statusBgColor),
@@ -316,7 +321,9 @@ fun HomeDashboard(
 
                 Button(
                     onClick = onConfirmBooking,
-                    enabled = !state.loading && state.isPickupGpsReady && state.dropoffLat != 0.0 && state.dropoffLng != 0.0,
+                    enabled = !state.loading && state.isPickupGpsReady && !isFixStale &&
+                            state.dropoffLat != 0.0 && state.dropoffLng != 0.0 &&
+                            state.estimatedFare > 0.0,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(
@@ -329,6 +336,7 @@ fun HomeDashboard(
                     } else {
                         val buttonText = when {
                             !state.isPickupGpsReady -> "Waiting for Location lock (Please Wait)..."
+                            isFixStale -> "Refreshing your location..."
                             state.dropoffLat == 0.0 || state.dropoffLng == 0.0 -> "Select a Destination to Book"
                             else -> "Confirm Booking Request"
                         }

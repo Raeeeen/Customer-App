@@ -1,10 +1,12 @@
 package com.cassey.customerapp.ui.home
 
 import android.Manifest
+import android.os.Build
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,6 +35,7 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 import kotlinx.coroutines.*
 
+@RequiresApi(Build.VERSION_CODES.O)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen() {
@@ -79,7 +82,7 @@ fun HomeScreen() {
 
     fun doFetchGPS() {
         fetchCurrentGPSLocation(
-            activeBookingId = state.activeBookingId,
+            activeBookingIdProvider = { state.activeBookingId },
             fusedLocationClient = fusedLocationClient,
             scope = scope,
             sharedPrefs = sharedPrefs,
@@ -88,7 +91,8 @@ fun HomeScreen() {
             onStatusMessage = { state.statusMessage = it },
             onPickupLatLng = { lat, lng -> state.pickupLat = lat; state.pickupLng = lng },
             onReverseGeocode = ::doReverseGeocode,
-            onGpsReadyChanged = { state.isPickupGpsReady = it }
+            onGpsReadyChanged = { state.isPickupGpsReady = it },
+            onFixTimestampUpdated = { state.lastFixTimestampMillis = it }
         )
     }
 
@@ -180,6 +184,7 @@ fun HomeScreen() {
                     sharedPrefs.edit().putString("active_booking_id", insertedBooking.id).apply()
                     state.activeBookingId = insertedBooking.id
                     state.bookingStatus = "pending"
+                    state.hasVibratedForAcceptance = false
                     state.success = true
                     state.statusMessage = "Booking requested! Waiting for driver acceptance..."
                 } else {
@@ -191,7 +196,11 @@ fun HomeScreen() {
                 Log.e("RideGoSubmit", "Booking insert timed out", e)
             } catch (e: Exception) {
                 state.success = false
-                state.statusMessage = "Transmission error: ${e.localizedMessage ?: "Network block error"}"
+                state.statusMessage = when (e) {
+                    is java.net.UnknownHostException,
+                    is java.io.IOException -> "No internet connection. Please check your connection and try again."
+                    else -> "Something went wrong while submitting your booking. Please try again."
+                }
                 Log.e("RideGoSubmit", "Supabase error core", e)
             } finally {
                 state.loading = false
@@ -214,7 +223,6 @@ fun HomeScreen() {
     }
 
     // Effects
-
     HomeEffects(
         state = state,
         sharedPrefs = sharedPrefs,
@@ -354,18 +362,7 @@ fun HomeScreen() {
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF283593))
                 ) {
-                    Row(
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = "Show Dashboard",
-                            tint = Color.White
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = "Show Booking Panel", fontWeight = FontWeight.Bold, color = Color.White)
-                    }
+                    Text(text = "Show Booking Panel", fontWeight = FontWeight.Bold, color = Color.White)
                 }
             }
         }

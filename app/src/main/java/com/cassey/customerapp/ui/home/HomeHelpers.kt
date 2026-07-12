@@ -65,7 +65,7 @@ private var currentGpsJob: Job? = null
 
 @SuppressLint("MissingPermission")
 fun fetchCurrentGPSLocation(
-    activeBookingId: String?,
+    activeBookingIdProvider: () -> String?,
     fusedLocationClient: FusedLocationProviderClient,
     scope: CoroutineScope,
     sharedPrefs: android.content.SharedPreferences,
@@ -74,21 +74,29 @@ fun fetchCurrentGPSLocation(
     onStatusMessage: (String) -> Unit,
     onPickupLatLng: (Double, Double) -> Unit,
     onReverseGeocode: (Double, Double) -> Unit,
-    onGpsReadyChanged: (Boolean) -> Unit
+    onGpsReadyChanged: (Boolean) -> Unit,
+    onFixTimestampUpdated: (Long) -> Unit
 ) {
-    if (activeBookingId != null) return
+    if (activeBookingIdProvider() != null) return
+    currentGpsJob?.cancel()
 
-    if (currentGpsJob?.isActive == true) return
+    onStatusMessage("Fetching user location... (Tap this to try again)")
 
-    onStatusMessage("Fetching precise GPS coordinates... (Tap this to try again)")
+    val moveThresholdMeters = 15.0
+    var lastLat: Double? = null
+    var lastLng: Double? = null
 
-    scope.launch {
+    currentGpsJob = scope.launch {
         var attempt = 0
         val maxAttempts = 6
         var delayMs = 2000L
+        var hasFirstFix = false
 
-        while (attempt < maxAttempts) {
-            attempt++
+        while (true) {
+            if (activeBookingIdProvider() != null) {
+                return@launch
+            }
+
             try {
                 val location = withTimeout(10000) {
                     suspendCancellableCoroutine<Location?> { cont ->
@@ -99,35 +107,70 @@ fun fetchCurrentGPSLocation(
                 }
 
                 if (location != null && location.accuracy <= 50f) {
-                    onPickupLatLng(location.latitude, location.longitude)
-                    sharedPrefs.edit()
-                        .putFloat("saved_pickup_lat", location.latitude.toFloat())
-                        .putFloat("saved_pickup_lng", location.longitude.toFloat())
-                        .apply()
-                    onReverseGeocode(location.latitude, location.longitude)
-                    cameraPositionState.animate(
-                        CameraUpdateFactory.newLatLngZoom(LatLng(location.latitude, location.longitude), 15f)
-                    )
-                    onStatusMessage("GPS lock established. Long-press map to pin destination!")
+                    val movedMeters = if (lastLat != null && lastLng != null) {
+                        calculateDistanceInKm(lastLat!!, lastLng!!, location.latitude, location.longitude) * 1000
+                    } else Double.MAX_VALUE
+
+                    val markerMoved = !hasFirstFix || movedMeters >= moveThresholdMeters
+
+                    if (markerMoved) {
+                        lastLat = location.latitude
+                        lastLng = location.longitude
+                        onPickupLatLng(location.latitude, location.longitude)
+                        sharedPrefs.edit()
+                            .putFloat("saved_pickup_lat", location.latitude.toFloat())
+                            .putFloat("saved_pickup_lng", location.longitude.toFloat())
+                            .apply()
+                        onReverseGeocode(location.latitude, location.longitude)
+
+                        try {
+                            cameraPositionState.animate(
+                                CameraUpdateFactory.newLatLngZoom(LatLng(location.latitude, location.longitude), 15f)
+                            )
+                        } catch (e: Exception) {
+                            Log.e("CustomerApp", "Camera animate failed, ignoring", e)
+                        }
+                    }
+
+                    hasFirstFix = true
                     onGpsReadyChanged(true)
-                    return@launch
+                    onFixTimestampUpdated(System.currentTimeMillis())
+                    onStatusMessage("Location lock Ready for booking. Long-press map to pin destination!")
+
+                    attempt = 0
+                    delayMs = 2000L
+                    delay(15000L)
+                    continue
                 } else if (location != null) {
                     Log.d("CustomerApp", "Rejected low-accuracy fix: ${location.accuracy}m")
                 }
             } catch (e: TimeoutCancellationException) {
-
+                //
             }
 
-            if (attempt < maxAttempts) {
-                onStatusMessage("Locating you... (Tap this to try again)")
-                delay(delayMs)
-                delayMs = (delayMs * 1.8).toLong().coerceAtMost(30000L)
+
+            if (!hasFirstFix) {
+                attempt++
+                if (attempt < maxAttempts) {
+                    onStatusMessage("Locating you... (Tap this to try again)")
+                    delay(delayMs)
+                    delayMs = (delayMs * 1.8).toLong().coerceAtMost(30000L)
+                } else {
+                    onStatusMessage("Please Check your Internet Connection. Tap this to try again.")
+                    onGpsReadyChanged(false)
+                    return@launch
+                }
             } else {
-                onStatusMessage("Couldn't get a precise location. Tap to try again.")
-                onGpsReadyChanged(false)
+                if (attempt == 0) {
+                    onStatusMessage("Reacquiring location (slow connection)... Tap to retry.")
+                }
+                attempt++
+                delay(5000L)
             }
         }
     }
+
+
 
 }
 
@@ -288,6 +331,10 @@ fun smartSnapDropoff(
                     val coordString = "Pinned: (%.4f, %.4f)".format(lat, lng)
                     sharedPrefs.edit().putString("saved_dropoff_address", coordString).apply()
                     onResult(lat, lng, coordString)
+                    updateTripDetails(
+                        pickupLat, pickupLng, lat, lng,
+                        bookingStatus, activeBookingId, scope, sharedPrefs, onTripUpdate
+                    )
                     onStatusMessage("📍 Pinned to custom coordinates")
                 }
             }
