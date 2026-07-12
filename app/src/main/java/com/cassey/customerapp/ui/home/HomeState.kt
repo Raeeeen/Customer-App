@@ -42,13 +42,13 @@ class HomeState(sharedPrefs: android.content.SharedPreferences) {
     var nearbyRidersJob by mutableStateOf<Job?>(null)
     var suggestions by mutableStateOf<List<PlaceSuggestion>>(emptyList())
     var searchJob by mutableStateOf<Job?>(null)
-
     var termsRecord by mutableStateOf<TermsOfServiceRecord?>(null)
     var showTermsDialog by mutableStateOf(false)
     var isTermsReviewMode by mutableStateOf(false)
     var isCustomerRealtimeConnected by mutableStateOf(true)
-
     var isPickupGpsReady by mutableStateOf(false)
+    var hasVibratedForAcceptance by mutableStateOf(false)
+    var lastFixTimestampMillis by mutableStateOf(0L)
 
     fun clear(sharedPrefs: android.content.SharedPreferences) {
         sharedPrefs.edit()
@@ -65,6 +65,7 @@ class HomeState(sharedPrefs: android.content.SharedPreferences) {
         activeBookingId = null
         bookingStatus = null
         isPickupGpsReady = false
+        lastFixTimestampMillis = 0L
         currentRiderId = null
         riderLatLng = null
         estimatedFare = 0.0
@@ -79,6 +80,7 @@ class HomeState(sharedPrefs: android.content.SharedPreferences) {
         driverName = ""
         driverPhone = ""
         success = null
-        statusMessage = "Long-press on the map to pin your destination!"
+        hasVibratedForAcceptance = false
+        statusMessage = "Locating user & locking GPS... (Tap this to try again)"
     }
 }

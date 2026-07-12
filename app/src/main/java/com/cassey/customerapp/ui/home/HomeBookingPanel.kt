@@ -5,7 +5,7 @@ import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -43,6 +43,17 @@ fun BookingStatusPanel(
     onFetchGPS: () -> Unit
 ) {
     val context = LocalContext.current
+    var showCompletedDialog by remember { mutableStateOf(false) }
+    var completedFare by remember { mutableStateOf(0.0) }
+
+    LaunchedEffect(showCompletedDialog) {
+        if (showCompletedDialog) {
+            delay(5000)
+            showCompletedDialog = false
+            onClearBooking()
+            onFetchGPS()
+        }
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -152,12 +163,6 @@ fun BookingStatusPanel(
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
-                            onClick = {},
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = emerald600)
-                        ) { Text("Cash") }
-
-                        Button(
                             onClick = {
                                 scope.launch {
                                     var updateSucceeded = false
@@ -178,14 +183,8 @@ fun BookingStatusPanel(
                                         Toast.makeText(context, "Couldn't reach server. Please try again.", Toast.LENGTH_LONG).show()
                                     }
                                     if (updateSucceeded) {
-                                        val fare = estimatedFare
-                                        onClearBooking()
-                                        Toast.makeText(
-                                            context,
-                                            "Ride completed! ₱${"%.2f".format(fare)} via GCash.",
-                                            Toast.LENGTH_LONG
-                                        ).show()
-                                        onFetchGPS()
+                                        completedFare = estimatedFare
+                                        showCompletedDialog = true
 
                                         try {
                                             val currentUser =
@@ -223,8 +222,8 @@ fun BookingStatusPanel(
                                 }
                             },
                             modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0052FF))
-                        ) { Text("GCash") }
+                            colors = ButtonDefaults.buttonColors(containerColor = emerald600)
+                        ) { Text("Cash") }
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -234,7 +233,28 @@ fun BookingStatusPanel(
                         style = MaterialTheme.typography.labelSmall
                     )
                 }
+                "completed" -> {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = emerald400,
+                        strokeWidth = 2.dp
+                    )
+                }
             }
         }
+    }
+
+    if (showCompletedDialog) {
+        AlertDialog(
+            onDismissRequest = { /* ignore outside taps, let the timer close it */ },
+            title = { Text("Ride Completed!") },
+            text = {
+                Text("You paid ₱${"%.2f".format(completedFare)} via Cash.\nThanks for riding with us!")
+            },
+            confirmButton = {},
+            containerColor = slate900,
+            titleContentColor = Color.White,
+            textContentColor = slate400
+        )
     }
 }
