@@ -29,6 +29,11 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 import kotlin.math.*
+import android.location.LocationManager
+import com.google.android.gms.location.LocationAvailability
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
 
 fun reverseGeocodePickup(
     lat: Double,
@@ -92,6 +97,14 @@ fun fetchCurrentGPSLocation(
         var delayMs = 2000L
         var hasFirstFix = false
 
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) &&
+            !locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+            onStatusMessage("Location services are turned off. Please enable GPS and try again.")
+            onGpsReadyChanged(false)
+            return@launch
+        }
+
         while (true) {
             if (activeBookingIdProvider() != null) {
                 return@launch
@@ -100,9 +113,29 @@ fun fetchCurrentGPSLocation(
             try {
                 val location = withTimeout(10000) {
                     suspendCancellableCoroutine<Location?> { cont ->
-                        val task = fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-                        task.addOnSuccessListener { cont.resume(it) {} }
-                        task.addOnFailureListener { cont.resume(null) {} }
+                        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L)
+                            .setMaxUpdates(1)
+                            .build()
+
+                        val callback = object : LocationCallback() {
+                            override fun onLocationResult(result: LocationResult) {
+                                fusedLocationClient.removeLocationUpdates(this)
+                                if (cont.isActive) cont.resume(result.lastLocation) {}
+                            }
+
+                            override fun onLocationAvailability(availability: LocationAvailability) {
+                                Log.d("GPSDebug", "onLocationAvailability: isLocationAvailable=${availability.isLocationAvailable}")
+                            }
+                        }
+
+                        fusedLocationClient.requestLocationUpdates(request, callback, context.mainLooper)
+                            .addOnFailureListener { e ->
+                                Log.e("GPSDebug", "requestLocationUpdates registration FAILED: ${e.javaClass.simpleName} - ${e.message}", e)
+                            }
+
+                        cont.invokeOnCancellation {
+                            fusedLocationClient.removeLocationUpdates(callback)
+                        }
                     }
                 }
 

@@ -314,7 +314,7 @@ fun LoginScreen(
                                 if (loading) {
                                     CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
                                 } else {
-                                    Text("Continue Session", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    Text("Continue", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                 }
                             }
                         }

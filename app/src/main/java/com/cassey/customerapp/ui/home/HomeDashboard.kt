@@ -179,9 +179,17 @@ fun HomeDashboard(
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color.White,
                             unfocusedTextColor = Color.White,
+                            disabledTextColor = Color.White,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            disabledContainerColor = Color.Transparent,
                             disabledBorderColor = slate700.copy(alpha = 0.5f),
                             focusedBorderColor = indigo600,
-                            unfocusedBorderColor = slate700
+                            unfocusedBorderColor = slate700,
+                            cursorColor = Color.White,
+                            focusedPlaceholderColor = slate400,
+                            unfocusedPlaceholderColor = slate400,
+                            disabledPlaceholderColor = slate400
                         )
                     )
 
