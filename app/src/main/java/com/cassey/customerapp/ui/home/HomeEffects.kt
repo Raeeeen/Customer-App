@@ -268,6 +268,13 @@ fun HomeEffects(
         }
     }
 
+    // Check for Google Play Service
+    LaunchedEffect(Unit) {
+        if (!isGooglePlayServicesAvailable(context)) {
+            state.showGmsMissingDialog = true
+        }
+    }
+
     // Cleanup channels on dispose
     DisposableEffect(Unit) {
         onDispose {
@@ -280,19 +287,5 @@ fun HomeEffects(
                 }
             }
         }
-    }
-
-    if (showCompletedDialog) {
-        AlertDialog(
-            onDismissRequest = { /* ignore outside taps, let the timer close it */ },
-            title = { Text("Ride Completed!") },
-            text = {
-                Text("Your Ride is Completed by the Rider.\nThanks for riding with us!")
-            },
-            confirmButton = {},
-            containerColor = Color(0xFF0F172A),
-            titleContentColor = Color.White,
-            textContentColor = Color(0xFF94A3B8)
-        )
     }
 }

@@ -42,7 +42,6 @@ fun hasAcceptedCurrentTerms(context: Context, activeVersion: String?): Boolean {
     val prefs = context.getSharedPreferences(TOS_PREFS, Context.MODE_PRIVATE)
     val accepted = prefs.getBoolean(KEY_TOS_ACCEPTED, false)
     if (!accepted) return false
-    // If we know the active version, also ensure it matches what was accepted.
     if (activeVersion != null) {
         val acceptedVersion = prefs.getString(KEY_TOS_ACCEPTED_VERSION, null)
         return acceptedVersion == activeVersion

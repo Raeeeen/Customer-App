@@ -50,6 +50,8 @@ class HomeState(sharedPrefs: android.content.SharedPreferences) {
     var hasVibratedForAcceptance by mutableStateOf(false)
     var lastFixTimestampMillis by mutableStateOf(0L)
 
+    var showGmsMissingDialog by mutableStateOf(false)
+
     fun clear(sharedPrefs: android.content.SharedPreferences) {
         sharedPrefs.edit()
             .remove("active_booking_id")

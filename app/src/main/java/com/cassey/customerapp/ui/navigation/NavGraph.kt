@@ -1,5 +1,6 @@
 package com.cassey.customerapp.ui.navigation
 
+import android.content.Context
 import android.os.Build
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,6 +23,7 @@ import androidx.annotation.RequiresApi
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.cassey.customerapp.ui.auth.SetNewPasswordScreen
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.realtime.realtime
@@ -29,6 +31,8 @@ import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.realtime.postgresChangeFlow
 import io.github.jan.supabase.realtime.channel
 import kotlinx.coroutines.flow.collect
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonPrimitive
 
 @RequiresApi(Build.VERSION_CODES.O)
@@ -155,7 +159,7 @@ fun NavGraph() {
                             HomeScreen()
                         }
                         composable(Screen.SetNewPassword.route) {
-                            com.cassey.customerapp.ui.auth.SetNewPasswordScreen(
+                            SetNewPasswordScreen(
                                 onPasswordSet = {
                                     PasswordResetFlag.set(context, false)
                                     navController.navigate(Screen.Home.route) {
@@ -193,13 +197,13 @@ object PasswordResetFlag {
     private const val PREFS = "RideGoAuthPrefs"
     private const val KEY = "needs_new_password"
 
-    fun set(context: android.content.Context, value: Boolean) {
-        context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+    fun set(context: Context, value: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putBoolean(KEY, value).apply()
     }
 
-    fun get(context: android.content.Context): Boolean {
-        return context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+    fun get(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getBoolean(KEY, false)
     }
 }
@@ -225,7 +229,7 @@ private fun DeviceWatcher(myDeviceId: String) {
             if (change !is PostgresAction.Update) return@collect
 
             val rawValue = change.record["bound_device_id"]
-            if (rawValue == null || rawValue is kotlinx.serialization.json.JsonNull) return@collect
+            if (rawValue == null || rawValue is JsonNull) return@collect
 
             val newDeviceId = rawValue.toString().trim('"')
             if (newDeviceId.isEmpty() || newDeviceId == myDeviceId) return@collect
@@ -241,7 +245,7 @@ private fun DeviceWatcher(myDeviceId: String) {
                             }
                         }
                     }
-                    .decodeList<Map<String, kotlinx.serialization.json.JsonElement>>()
+                    .decodeList<Map<String, JsonElement>>()
 
 
                 if (activeBookings.isEmpty()) {

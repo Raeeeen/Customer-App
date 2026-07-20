@@ -379,4 +379,17 @@ fun HomeScreen() {
             )
         }
     }
+
+    if (state.showGmsMissingDialog) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Google Play Services Required") },
+            text = { Text("This device doesn't have Google Play Services, which Cassey needs for GPS location. The app won't be able to detect nearby passengers on this device.") },
+            confirmButton = {
+                TextButton(onClick = { state.showGmsMissingDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
 }
