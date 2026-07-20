@@ -288,4 +288,18 @@ fun HomeEffects(
             }
         }
     }
+
+    if (showCompletedDialog) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Ride Completed!") },
+            text = {
+                Text("Your Ride is Completed by the Rider.\nThanks for riding with us!")
+            },
+            confirmButton = {},
+            containerColor = Color(0xFF0F172A),
+            titleContentColor = Color.White,
+            textContentColor = Color(0xFF94A3B8)
+        )
+    }
 }
