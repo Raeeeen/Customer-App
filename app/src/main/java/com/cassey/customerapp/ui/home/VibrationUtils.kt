@@ -1,7 +1,9 @@
 package com.cassey.customerapp.ui.home
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.os.Build
+import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -21,13 +23,13 @@ fun vibrateDevice(context: Context, durationMs: Long = 600) {
 
     val effect = VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE)
     if (Build.VERSION.SDK_INT >= 33) {
-        val attributes = android.os.VibrationAttributes.Builder()
-            .setUsage(android.os.VibrationAttributes.USAGE_NOTIFICATION)
+        val attributes = VibrationAttributes.Builder()
+            .setUsage(VibrationAttributes.USAGE_NOTIFICATION)
             .build()
         vibrator.vibrate(effect, attributes)
     } else {
-        val audioAttributes = android.media.AudioAttributes.Builder()
-            .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_EVENT)
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
             .build()
         vibrator.vibrate(effect, audioAttributes)
     }

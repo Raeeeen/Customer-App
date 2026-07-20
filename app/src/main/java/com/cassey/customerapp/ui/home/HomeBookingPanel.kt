@@ -20,6 +20,9 @@ import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.jsonPrimitive
+import androidx.compose.foundation.BorderStroke
+import android.provider.Settings.Secure
+import kotlinx.serialization.json.JsonElement
 
 @Composable
 fun BookingStatusPanel(
@@ -59,7 +62,7 @@ fun BookingStatusPanel(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = slate900),
         shape = RoundedCornerShape(12.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, indigo600.copy(alpha = 0.4f))
+        border = BorderStroke(1.dp, indigo600.copy(alpha = 0.4f))
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -191,9 +194,9 @@ fun BookingStatusPanel(
                                                 SupabaseClient.client.auth.currentUserOrNull()
                                             if (currentUser != null) {
                                                 val myDeviceId =
-                                                    android.provider.Settings.Secure.getString(
+                                                    Secure.getString(
                                                         context.contentResolver,
-                                                        android.provider.Settings.Secure.ANDROID_ID
+                                                        Secure.ANDROID_ID
                                                     ) ?: "unknown-device"
 
                                                 val profile =
@@ -206,7 +209,7 @@ fun BookingStatusPanel(
                                                                 )
                                                             }
                                                         }
-                                                        .decodeSingle<Map<String, kotlinx.serialization.json.JsonElement>>()
+                                                        .decodeSingle<Map<String, JsonElement>>()
 
                                                 val boundDeviceId =
                                                     profile["bound_device_id"]?.jsonPrimitive?.content
@@ -246,7 +249,7 @@ fun BookingStatusPanel(
 
     if (showCompletedDialog) {
         AlertDialog(
-            onDismissRequest = { /* ignore outside taps, let the timer close it */ },
+            onDismissRequest = {},
             title = { Text("Ride Completed!") },
             text = {
                 Text("You paid ₱${"%.2f".format(completedFare)} via Cash.\nThanks for riding with us!")
