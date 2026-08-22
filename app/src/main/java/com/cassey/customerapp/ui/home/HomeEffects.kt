@@ -30,6 +30,9 @@ import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonPrimitive
 import com.google.android.gms.maps.model.LatLng
 import kotlin.math.*
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
@@ -46,6 +49,49 @@ fun HomeEffects(
     onTripUpdate: (distance: Double, fare: Double) -> Unit,
     onClearBooking: () -> Unit,
 ) {
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Fetches the current booking row directly and applies it to state.
+    suspend fun syncBookingStatus(
+        bookingId: String,
+        state: HomeState,
+        context: Context,
+        onClearBooking: () -> Unit,
+        onFetchGPS: () -> Unit
+    ) {
+        try {
+            val snapshot = withContext(Dispatchers.IO) {
+                NetworkQuality.timed {
+                    withTimeout(8000) {
+                        SupabaseClient.client.from("bookings")
+                            .select { filter { eq("id", bookingId) } }
+                            .decodeSingleOrNull<BookingStatusUpdate>()
+                    }
+                }
+            }
+            if (snapshot != null) {
+                state.bookingStatus = snapshot.status
+                if (snapshot.status == "accepted" && snapshot.rider_id != null) {
+                    state.currentRiderId = snapshot.rider_id
+                    if (!state.hasVibratedForAcceptance) {
+                        vibrateDevice(context)
+                        state.hasVibratedForAcceptance = true
+                    }
+                    fetchDriverDetails(snapshot.rider_id) { name, phone ->
+                        state.driverName = name
+                        state.driverPhone = phone
+                    }
+                }
+                if (snapshot.status in listOf("completed", "cancelled")) {
+                    onClearBooking()
+                    onFetchGPS()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("CustomerApp", "syncBookingStatus failed", e)
+        }
+    }
 
     var showCompletedDialog by remember { mutableStateOf(false) }
 
@@ -85,37 +131,8 @@ fun HomeEffects(
 
         val currentBookingId = state.activeBookingId ?: return@LaunchedEffect
 
-        try {
-            val snapshot = withContext(Dispatchers.IO) {
-                NetworkQuality.timed {
-                    withTimeout(8000) {
-                        SupabaseClient.client.from("bookings")
-                            .select { filter { eq("id", currentBookingId) } }
-                            .decodeSingleOrNull<BookingStatusUpdate>()
-                    }
-                }
-            }
-            if (snapshot != null) {
-                state.bookingStatus = snapshot.status
-                if (snapshot.status == "accepted" && snapshot.rider_id != null) {
-                    Log.d("Vibration", "Status changed to accepted, hasVibrated=${state.hasVibratedForAcceptance}")
-                    state.currentRiderId = snapshot.rider_id
-                    if (!state.hasVibratedForAcceptance) {
-                        vibrateDevice(context)
-                        state.hasVibratedForAcceptance = true
-                    }
-                    fetchDriverDetails(snapshot.rider_id) { name, phone ->
-                        state.driverName = name
-                        state.driverPhone = phone
-                    }
-                }
-                if (snapshot.status in listOf("completed", "cancelled")) {
-                    onClearBooking(); onFetchGPS(); return@LaunchedEffect
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("CustomerApp", "Failed to seed booking state", e)
-        }
+        syncBookingStatus(currentBookingId, state, context, onClearBooking, onFetchGPS)
+        if (state.bookingStatus in listOf("completed", "cancelled")) return@LaunchedEffect
 
         val channel = SupabaseClient.client.channel("customer-booking-$currentBookingId")
         channel.postgresChangeFlow<PostgresAction.Update>(schema = "public") {
@@ -273,6 +290,29 @@ fun HomeEffects(
         if (!isGooglePlayServicesAvailable(context)) {
             state.showGmsMissingDialog = true
         }
+    }
+
+    // Realtime websocket gets killed by Doze/background network limits
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                state.activeBookingId?.let { bookingId ->
+                    scope.launch {
+                        syncBookingStatus(bookingId, state, context, onClearBooking, onFetchGPS)
+                    }
+                }
+                scope.launch {
+                    try {
+                        SupabaseClient.client.realtime.disconnect()
+                        SupabaseClient.client.realtime.connect()
+                    } catch (e: Exception) {
+                        Log.e("Realtime", "Reconnect on resume failed", e)
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // Cleanup channels on dispose

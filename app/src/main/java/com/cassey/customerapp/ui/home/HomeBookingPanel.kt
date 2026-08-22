@@ -48,6 +48,8 @@ fun BookingStatusPanel(
     val context = LocalContext.current
     var showCompletedDialog by remember { mutableStateOf(false) }
     var completedFare by remember { mutableStateOf(0.0) }
+    var isCancelling by remember { mutableStateOf(false) }
+    var isCompletingRide by remember { mutableStateOf(false) }
 
     LaunchedEffect(showCompletedDialog) {
         if (showCompletedDialog) {
@@ -90,21 +92,29 @@ fun BookingStatusPanel(
                         modifier = Modifier.padding(top = 4.dp)
                     )
                     TextButton(
+                        enabled = !isCancelling,
                         onClick = {
+                            if (isCancelling) return@TextButton
+                            isCancelling = true
                             scope.launch {
                                 try {
                                     val currentBookingId = activeBookingId
                                     if (!currentBookingId.isNullOrEmpty()) {
-                                        SupabaseClient.client.from("bookings").delete {
-                                            filter {
-                                                eq("id", currentBookingId)
-                                                eq("status", "pending")
+                                        withTimeout(8000) {
+                                            SupabaseClient.client.from("bookings").delete {
+                                                filter {
+                                                    eq("id", currentBookingId)
+                                                    eq("status", "pending")
+                                                }
                                             }
                                         }
                                     }
+                                } catch (e: TimeoutCancellationException) {
+                                    Toast.makeText(context, "Connection too slow to cancel. Please try again.", Toast.LENGTH_LONG).show()
                                 } catch (e: Exception) {
                                     Log.e("RideGoCancel", "Failed to delete booking row", e)
                                 } finally {
+                                    isCancelling = false
                                     onClearBooking()
                                     Toast.makeText(context, "Booking cancelled.", Toast.LENGTH_LONG).show()
                                     onFetchGPS()
@@ -112,11 +122,19 @@ fun BookingStatusPanel(
                             }
                         }
                     ) {
-                        Text(
-                            text = "Cancel Booking Request",
-                            color = rose400,
-                            style = MaterialTheme.typography.labelMedium
-                        )
+                        if (isCancelling) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                color = rose400,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text(
+                                text = "Cancel Booking Request",
+                                color = rose400,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
                     }
                 }
 
@@ -166,7 +184,10 @@ fun BookingStatusPanel(
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
+                            enabled = !isCompletingRide,
                             onClick = {
+                                if (isCompletingRide) return@Button
+                                isCompletingRide = true
                                 scope.launch {
                                     var updateSucceeded = false
                                     try {
@@ -221,12 +242,24 @@ fun BookingStatusPanel(
                                         } catch (e: Exception) {
                                             Log.e("DeviceWatcher", "Post-trip device check failed: ${e.message}")
                                         }
+                                    } else {
+                                        isCompletingRide = false
                                     }
                                 }
                             },
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(containerColor = emerald600)
-                        ) { Text("Cash") }
+                        ) {
+                            if (isCompletingRide) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                            }  else {
+                                Text("Cash")
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))

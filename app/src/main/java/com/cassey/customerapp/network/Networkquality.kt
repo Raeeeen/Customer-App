@@ -40,6 +40,7 @@ object NetworkQuality {
     private val _connectionType = MutableStateFlow(ConnectionType.NONE)
     val connectionType = _connectionType.asStateFlow()
 
+
     suspend fun <T> timed(block: suspend () -> T): T {
         val start = System.currentTimeMillis()
         try {
@@ -49,6 +50,15 @@ object NetworkQuality {
         } catch (e: TimeoutCancellationException) {
             recordTimeout()
             throw e
+        }
+    }
+
+    // Clears carried over latency state from before a long screen off period
+    fun resetForFreshCheck() {
+        synchronized(recentLatenciesMs) {
+            recentLatenciesMs.clear()
+            lastTimeoutAtMs = 0L
+            _quality.value = ConnectionQuality.UNKNOWN
         }
     }
 

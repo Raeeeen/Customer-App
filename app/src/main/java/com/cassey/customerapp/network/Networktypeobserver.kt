@@ -17,6 +17,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import kotlinx.coroutines.withTimeout
+import io.github.jan.supabase.postgrest.from
 
 @Composable
 fun NetworkTypeObserver() {
@@ -82,6 +87,34 @@ fun NetworkTypeObserver() {
             } catch (e: Exception) {
                 // Handle the exception
             }
+        }
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val resumeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                NetworkQuality.updateConnectionType(context)
+                NetworkQuality.resetForFreshCheck()
+                resumeScope.launch {
+                    try {
+                        NetworkQuality.timed {
+                            withTimeout(8000) {
+                                SupabaseClient.client.from("fare")
+                                    .select { filter { eq("id", 1) } }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // handled inside timed
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            resumeScope.cancel()
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
 }
