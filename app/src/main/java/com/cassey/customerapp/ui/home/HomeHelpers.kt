@@ -100,7 +100,7 @@ fun fetchCurrentGPSLocation(
         val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
         if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) &&
             !locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-            onStatusMessage("Location services are turned off. Please enable GPS and try again.")
+            onStatusMessage("Location services are turned off. Please enable GPS and Tap this to try again.")
             onGpsReadyChanged(false)
             return@launch
         }
