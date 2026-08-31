@@ -49,8 +49,8 @@ class HomeState(sharedPrefs: android.content.SharedPreferences) {
     var isPickupGpsReady by mutableStateOf(false)
     var hasVibratedForAcceptance by mutableStateOf(false)
     var lastFixTimestampMillis by mutableStateOf(0L)
-
     var showGmsMissingDialog by mutableStateOf(false)
+    var dropoffSnapJob by mutableStateOf<Job?>(null)
 
     fun clear(sharedPrefs: android.content.SharedPreferences) {
         sharedPrefs.edit()
@@ -83,6 +83,8 @@ class HomeState(sharedPrefs: android.content.SharedPreferences) {
         driverPhone = ""
         success = null
         hasVibratedForAcceptance = false
+        dropoffSnapJob?.cancel()
+        dropoffSnapJob = null
         statusMessage = "Locating user & locking GPS... (Tap this to try again)"
     }
 }
