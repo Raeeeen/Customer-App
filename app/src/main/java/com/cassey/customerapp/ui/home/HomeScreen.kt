@@ -109,6 +109,7 @@ fun HomeScreen() {
     }
 
     fun doSmartSnap(lat: Double, lng: Double) {
+        state.dropoffSnapJob?.cancel()
         smartSnapDropoff(
             lat = lat, lng = lng,
             mapsApiKey = com.cassey.customerapp.BuildConfig.MAPS_API_KEY,
@@ -120,6 +121,7 @@ fun HomeScreen() {
             pickupLng = state.pickupLng,
             bookingStatus = state.bookingStatus,
             activeBookingId = state.activeBookingId,
+            onJobCreated = { state.dropoffSnapJob = it },
             onResult = { snappedLat, snappedLng, displayName ->
                 state.dropoffLat = snappedLat
                 state.dropoffLng = snappedLng

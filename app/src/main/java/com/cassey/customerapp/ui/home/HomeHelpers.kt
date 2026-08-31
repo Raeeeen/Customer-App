@@ -287,11 +287,12 @@ fun smartSnapDropoff(
     pickupLat: Double, pickupLng: Double,
     bookingStatus: String?,
     activeBookingId: String?,
+    onJobCreated: (Job) -> Unit,
     onResult: (snappedLat: Double, snappedLng: Double, displayName: String) -> Unit,
     onTripUpdate: (distance: Double, fare: Double) -> Unit,
     onStatusMessage: (String) -> Unit
 ) {
-    scope.launch(Dispatchers.IO) {
+    val job = scope.launch(Dispatchers.IO) {
         try {
             val nearbyUrl = "https://maps.googleapis.com/maps/api/place/nearbysearch/json" +
                     "?location=$lat,$lng&rankby=distance&type=establishment&key=$mapsApiKey"
@@ -358,7 +359,11 @@ fun smartSnapDropoff(
                     )
                     onStatusMessage("📍 Pinned to: $displayName")
                     scope.launch {
-                        cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(LatLng(lat, lng), 18f))
+                        try {
+                            cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(LatLng(lat, lng), 18f))
+                        } catch (e: Exception) {
+                            Log.e("CustomerApp", "Camera animate failed during snap, ignoring", e)
+                        }
                     }
                 } else {
                     val coordString = "Pinned: (%.4f, %.4f)".format(lat, lng)
@@ -378,6 +383,7 @@ fun smartSnapDropoff(
             }
         }
     }
+    onJobCreated(job)
 }
 
 fun searchDestination(
