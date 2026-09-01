@@ -1,9 +1,12 @@
 package com.cassey.customerapp.ui.home
 
+import android.Manifest
 import android.content.Context
 import android.os.Build
 import android.util.Log
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
@@ -51,6 +54,12 @@ fun HomeEffects(
 ) {
 
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        // Handle notification permission result
+    }
 
     // Fetches the current booking row directly and applies it to state.
     suspend fun syncBookingStatus(
@@ -101,6 +110,12 @@ fun HomeEffects(
             showCompletedDialog = false
             onClearBooking()
             onFetchGPS()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
