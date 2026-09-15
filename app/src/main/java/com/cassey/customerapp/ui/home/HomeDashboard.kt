@@ -1,5 +1,6 @@
 package com.cassey.customerapp.ui.home
 
+import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -52,6 +53,7 @@ fun HomeDashboard(
     onClearBooking: () -> Unit,
     onFetchGPS: () -> Unit,
     onSearchDestination: (String) -> Unit,
+    onSelectSuggestion: (PlaceSuggestion) -> Unit,
     onUpdateTripDetails: (Double, Double, Double, Double) -> Unit,
     onHideDashboard: () -> Unit,
     onConfirmBooking: () -> Unit
@@ -140,6 +142,7 @@ fun HomeDashboard(
                                 state.suggestions = emptyList()
                                 state.tripDistance = 0.0
                                 state.estimatedFare = 0.0
+                                state.hasDestinationStatus = false
                                 state.statusMessage = "Long-press on the map to pin your destination!"
                             } else {
                                 onSearchDestination(newValue)
@@ -163,7 +166,17 @@ fun HomeDashboard(
                                     state.suggestions = emptyList()
                                     state.tripDistance = 0.0
                                     state.estimatedFare = 0.0
+                                    state.hasDestinationStatus = false
                                     state.statusMessage = "Long-press on the map to pin your destination!"
+                                    scope.launch {
+                                        try {
+                                            cameraPositionState.animate(
+                                                CameraUpdateFactory.newLatLngZoom(PagadianDefaults.CAMERA_CENTER, PagadianDefaults.CAMERA_ZOOM)
+                                            )
+                                        } catch (e: Exception) {
+                                            Log.e("CustomerApp", "Camera animate failed, ignoring", e)
+                                        }
+                                    }
                                 }) {
                                     Icon(
                                         imageVector = Icons.Default.Close,
@@ -214,28 +227,7 @@ fun HomeDashboard(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
-                                            state.dropoffLat = suggestion.latitude
-                                            state.dropoffLng = suggestion.longitude
-                                            state.selectedDropoffAddress = suggestion.displayName
-                                            state.dropoffInput = suggestion.displayName
-                                            state.suggestions = emptyList()
-                                            sharedPrefs.edit()
-                                                .putFloat("saved_dropoff_lat", suggestion.latitude.toFloat())
-                                                .putFloat("saved_dropoff_lng", suggestion.longitude.toFloat())
-                                                .putString("saved_dropoff_address", suggestion.displayName)
-                                                .apply()
-                                            onUpdateTripDetails(
-                                                state.pickupLat, state.pickupLng,
-                                                suggestion.latitude, suggestion.longitude
-                                            )
-                                            scope.launch {
-                                                cameraPositionState.animate(
-                                                    CameraUpdateFactory.newLatLngZoom(
-                                                        LatLng(suggestion.latitude, suggestion.longitude), 22f
-                                                    )
-                                                )
-                                            }
-                                            state.statusMessage = "Destination set!"
+                                            onSelectSuggestion(suggestion)
                                         }
                                         .background(if (index % 2 == 0) slate800 else slate700.copy(alpha = 0.2f))
                                         .padding(horizontal = 14.dp, vertical = 10.dp),
@@ -342,7 +334,7 @@ fun HomeDashboard(
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
                     } else {
                         val buttonText = when {
-                            !state.isPickupGpsReady -> "Waiting for Location lock (Please Wait)..."
+                            !state.isPickupGpsReady -> "Waiting for GPS Location (Please Wait)..."
                             isFixStale -> "Refreshing your location..."
                             state.dropoffLat == 0.0 || state.dropoffLng == 0.0 -> "Select a Destination to Book"
                             else -> "Confirm Booking Request"

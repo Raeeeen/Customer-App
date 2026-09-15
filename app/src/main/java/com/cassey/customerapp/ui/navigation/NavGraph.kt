@@ -31,6 +31,7 @@ import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.realtime.postgresChangeFlow
 import io.github.jan.supabase.realtime.channel
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -214,61 +215,85 @@ private fun DeviceWatcher(myDeviceId: String) {
         val userId = SupabaseClient.client.auth.currentUserOrNull()?.id ?: return@LaunchedEffect
 
         val profileChannel = SupabaseClient.client.realtime.channel("profile-watch-$userId")
-        val profileFlow = profileChannel.postgresChangeFlow<PostgresAction>(schema = "public") {
-            table = "profiles"
-            filter("id", FilterOperator.EQ, userId)
-        }
-        profileChannel.subscribe()
-
-        profileFlow.collect { change ->
-            if (change is PostgresAction.Delete) {
-                SupabaseClient.client.auth.signOut()
-                return@collect
+        try {
+            val profileFlow = profileChannel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                table = "profiles"
+                filter("id", FilterOperator.EQ, userId)
             }
+            profileChannel.subscribe()
 
-            if (change !is PostgresAction.Update) return@collect
+            profileFlow.collect { change ->
+                if (change is PostgresAction.Delete) {
+                    SupabaseClient.client.auth.signOut()
+                    return@collect
+                }
 
-            val rawValue = change.record["bound_device_id"]
-            if (rawValue == null || rawValue is JsonNull) return@collect
+                if (change !is PostgresAction.Update) return@collect
 
-            val newDeviceId = rawValue.toString().trim('"')
-            if (newDeviceId.isEmpty() || newDeviceId == myDeviceId) return@collect
+                val rawValue = change.record["bound_device_id"]
+                if (rawValue == null || rawValue is JsonNull) return@collect
 
-            try {
-                val activeBookings = SupabaseClient.client.postgrest["bookings"]
-                    .select {
-                        filter {
-                            eq("customer_id", userId)
-                            or {
-                                eq("status", "accepted")
-                                eq("status", "in_progress")
+                val newDeviceId = rawValue.toString().trim('"')
+                if (newDeviceId.isEmpty() || newDeviceId == myDeviceId) return@collect
+
+                try {
+                    val activeBookings = SupabaseClient.client.postgrest["bookings"]
+                        .select {
+                            filter {
+                                eq("customer_id", userId)
+                                or {
+                                    eq("status", "accepted")
+                                    eq("status", "in_progress")
+                                }
+                            }
+                        }
+                        .decodeList<Map<String, JsonElement>>()
+
+
+                    if (activeBookings.isEmpty()) {
+                        SupabaseClient.client.auth.signOut()
+                    } else {
+
+                        val bookingChannel =
+                            SupabaseClient.client.realtime.channel("booking-watch-$userId")
+                        try {
+                            val bookingFlow =
+                                bookingChannel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                                    table = "bookings"
+                                    filter("customer_id", FilterOperator.EQ, userId)
+                                }
+                            bookingChannel.subscribe()
+
+                            bookingFlow.collect { bookingChange ->
+                                if (bookingChange !is PostgresAction.Update) return@collect
+                                val status = bookingChange.record["status"]?.toString()?.trim('"')
+                                if (status == "completed" || status == "cancelled") {
+                                    SupabaseClient.client.auth.signOut()
+                                }
+                            }
+                        } finally {
+                            withContext(kotlinx.coroutines.NonCancellable) {
+                                try {
+                                    bookingChannel.unsubscribe()
+                                    SupabaseClient.client.realtime.removeChannel(bookingChannel)
+                                } catch (e: Exception) {
+                                    Log.e("DeviceWatcher", "Booking channel cleanup failed", e)
+                                }
                             }
                         }
                     }
-                    .decodeList<Map<String, JsonElement>>()
-
-
-                if (activeBookings.isEmpty()) {
+                } catch (e: Exception) {
                     SupabaseClient.client.auth.signOut()
-                } else {
-
-                    val bookingChannel = SupabaseClient.client.realtime.channel("booking-watch-$userId")
-                    val bookingFlow = bookingChannel.postgresChangeFlow<PostgresAction>(schema = "public") {
-                        table = "bookings"
-                        filter("customer_id", FilterOperator.EQ, userId)
-                    }
-                    bookingChannel.subscribe()
-
-                    bookingFlow.collect { bookingChange ->
-                        if (bookingChange !is PostgresAction.Update) return@collect
-                        val status = bookingChange.record["status"]?.toString()?.trim('"')
-                        if (status == "completed" || status == "cancelled") {
-                            SupabaseClient.client.auth.signOut()
-                        }
-                    }
                 }
-            } catch (e: Exception) {
-                SupabaseClient.client.auth.signOut()
+            }
+        } finally {
+            withContext(kotlinx.coroutines.NonCancellable) {
+                try {
+                    profileChannel.unsubscribe()
+                    SupabaseClient.client.realtime.removeChannel(profileChannel)
+                } catch (e: Exception) {
+                    Log.e("DeviceWatcher", "Profile channel cleanup failed", e)
+                }
             }
         }
     }

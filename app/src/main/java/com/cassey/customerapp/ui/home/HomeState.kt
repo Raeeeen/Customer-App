@@ -9,24 +9,28 @@ import kotlinx.coroutines.Job
 
 class HomeState(sharedPrefs: android.content.SharedPreferences) {
     var loading by mutableStateOf(false)
-    var statusMessage by mutableStateOf("Locating user session & locking GPS...")
     var success by mutableStateOf<Boolean?>(null)
     var isDashboardVisible by mutableStateOf(true)
     var driverName by mutableStateOf("")
     var driverPhone by mutableStateOf("")
-
     var activeBookingId by mutableStateOf(sharedPrefs.getString("active_booking_id", null))
     var bookingStatus by mutableStateOf(
         if (sharedPrefs.getString("active_booking_id", null) != null) "pending" else null
     )
     var currentRiderId by mutableStateOf<String?>(null)
     var riderLatLng by mutableStateOf<LatLng?>(null)
-
     var dropoffLat by mutableStateOf(sharedPrefs.getFloat("saved_dropoff_lat", 0.0f).toDouble())
     var dropoffLng by mutableStateOf(sharedPrefs.getFloat("saved_dropoff_lng", 0.0f).toDouble())
     var selectedDropoffAddress by mutableStateOf(sharedPrefs.getString("saved_dropoff_address", "") ?: "")
     var dropoffInput by mutableStateOf(sharedPrefs.getString("saved_dropoff_address", "") ?: "")
-
+    private val hasSavedDropoff = dropoffLat != 0.0 && dropoffLng != 0.0
+    var statusMessage by mutableStateOf(
+        if (hasSavedDropoff) {
+            if (selectedDropoffAddress.isNotEmpty()) "📍 Drop-off to: $selectedDropoffAddress" else "Last Known Location: "
+        } else {
+            "Locating user session & locking GPS..."
+        }
+    )
     var tripDistance by mutableStateOf(sharedPrefs.getFloat("saved_trip_distance", 0.0f).toDouble())
     var estimatedFare by mutableStateOf(sharedPrefs.getFloat("saved_estimated_fare", 0.0f).toDouble())
 
@@ -51,6 +55,7 @@ class HomeState(sharedPrefs: android.content.SharedPreferences) {
     var lastFixTimestampMillis by mutableStateOf(0L)
     var showGmsMissingDialog by mutableStateOf(false)
     var dropoffSnapJob by mutableStateOf<Job?>(null)
+    var hasDestinationStatus by mutableStateOf(hasSavedDropoff)
 
     fun clear(sharedPrefs: android.content.SharedPreferences) {
         sharedPrefs.edit()
@@ -67,6 +72,7 @@ class HomeState(sharedPrefs: android.content.SharedPreferences) {
         activeBookingId = null
         bookingStatus = null
         isPickupGpsReady = false
+        hasDestinationStatus = false
         lastFixTimestampMillis = 0L
         currentRiderId = null
         riderLatLng = null
@@ -85,6 +91,6 @@ class HomeState(sharedPrefs: android.content.SharedPreferences) {
         hasVibratedForAcceptance = false
         dropoffSnapJob?.cancel()
         dropoffSnapJob = null
-        statusMessage = "Locating user & locking GPS... (Tap this to try again)"
+        statusMessage = "Locating user & locking GPS..."
     }
 }
