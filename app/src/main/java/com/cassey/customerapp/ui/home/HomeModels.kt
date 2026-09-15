@@ -18,8 +18,9 @@ data class BookingRequest(
 
 data class PlaceSuggestion(
     val displayName: String,
-    val latitude: Double,
-    val longitude: Double
+    val placeId: String,
+    val latitude: Double = 0.0,
+    val longitude: Double = 0.0
 )
 
 @Serializable

@@ -34,6 +34,10 @@ import com.google.android.gms.location.LocationAvailability
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
+import android.widget.Toast
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 
 fun reverseGeocodePickup(
     lat: Double,
@@ -76,6 +80,7 @@ fun fetchCurrentGPSLocation(
     sharedPrefs: android.content.SharedPreferences,
     context: Context,
     cameraPositionState: CameraPositionState,
+    shouldAnimateCameraToPickup: () -> Boolean,
     onStatusMessage: (String) -> Unit,
     onPickupLatLng: (Double, Double) -> Unit,
     onReverseGeocode: (Double, Double) -> Unit,
@@ -85,126 +90,123 @@ fun fetchCurrentGPSLocation(
     if (activeBookingIdProvider() != null) return
     currentGpsJob?.cancel()
 
-    onStatusMessage("Fetching user location... (Tap this to try again)")
+    onStatusMessage("Fetching your location...")
 
     val moveThresholdMeters = 15.0
+    val goodAccuracyMeters = 50f
     var lastLat: Double? = null
     var lastLng: Double? = null
+    var hasFirstFix = false
+    var hasWarnedLocationServicesOff = false
 
-    currentGpsJob = scope.launch {
-        var attempt = 0
-        val maxAttempts = 6
-        var delayMs = 2000L
-        var hasFirstFix = false
+    fun applyFix(location: Location, isConfirmedLive: Boolean) {
+        val movedMeters = if (lastLat != null && lastLng != null) {
+            calculateDistanceInKm(lastLat!!, lastLng!!, location.latitude, location.longitude) * 1000
+        } else Double.MAX_VALUE
 
-        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) &&
-            !locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-            onStatusMessage("Location services are turned off. Please enable GPS and Tap this to try again.")
-            onGpsReadyChanged(false)
-            return@launch
+        if (!hasFirstFix || movedMeters >= moveThresholdMeters) {
+            onPickupLatLng(location.latitude, location.longitude)
+            onReverseGeocode(location.latitude, location.longitude)
+            if (shouldAnimateCameraToPickup()) {
+                scope.launch {
+                    try {
+                        cameraPositionState.animate(
+                            CameraUpdateFactory.newLatLngZoom(LatLng(location.latitude, location.longitude), 15f)
+                        )
+                    } catch (e: Exception) {
+                        Log.e("CustomerApp", "Camera animate failed, ignoring", e)
+                    }
+                }
+            }
         }
 
-        while (true) {
-            if (activeBookingIdProvider() != null) {
-                return@launch
+        if (!isConfirmedLive) {
+            onGpsReadyChanged(false)
+            onStatusMessage("Showing your last known location — confirming your current position...")
+            return
+        }
+
+        lastLat = location.latitude
+        lastLng = location.longitude
+        sharedPrefs.edit()
+            .putFloat("saved_pickup_lat", location.latitude.toFloat())
+            .putFloat("saved_pickup_lng", location.longitude.toFloat())
+            .apply()
+        hasFirstFix = true
+        onGpsReadyChanged(true)
+        onFixTimestampUpdated(System.currentTimeMillis())
+        onStatusMessage(
+            if (location.accuracy <= goodAccuracyMeters)
+                "Location ready. Long-press map to pin destination!"
+            else
+                "Rough location — refining accuracy..."
+        )
+    }
+
+    currentGpsJob = scope.launch {
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+
+        try {
+            fusedLocationClient.lastLocation.addOnSuccessListener { cached ->
+                val maxCacheAgeMs = 2 * 60 * 1000L
+                val isFresh = cached != null &&
+                        (System.currentTimeMillis() - cached.time) <= maxCacheAgeMs
+                if (isFresh && !hasFirstFix) {
+                    applyFix(cached!!, isConfirmedLive = false)
+                }
             }
+        } catch (e: Exception) {
+            Log.e("CustomerApp", "Cached location fetch failed", e)
+        }
 
-            try {
-                val location = withTimeout(10000) {
-                    suspendCancellableCoroutine<Location?> { cont ->
-                        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L)
-                            .setMaxUpdates(1)
+        var callback: LocationCallback? = null
+        try {
+            while (isActive) {
+                if (activeBookingIdProvider() != null) return@launch
+
+                val servicesOn = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+                        locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+
+                if (!servicesOn) {
+                    callback?.let { fusedLocationClient.removeLocationUpdates(it) }
+                    callback = null
+                    onStatusMessage("Location services are off. Turn on GPS to continue")
+                    onGpsReadyChanged(false)
+                    if (!hasWarnedLocationServicesOff) {
+                        Toast.makeText(
+                            context,
+                            "Turn on Location Services\nto book a ride.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        hasWarnedLocationServicesOff = true
+                    }
+                } else {
+                    hasWarnedLocationServicesOff = false
+                    if (callback == null) {
+                        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)
+                            .setMinUpdateIntervalMillis(2000L)
                             .build()
-
-                        val callback = object : LocationCallback() {
+                        val cb = object : LocationCallback() {
                             override fun onLocationResult(result: LocationResult) {
-                                fusedLocationClient.removeLocationUpdates(this)
-                                if (cont.isActive) cont.resume(result.lastLocation) {}
+                                result.lastLocation?.let { applyFix(it, isConfirmedLive = true) }
                             }
-
                             override fun onLocationAvailability(availability: LocationAvailability) {
-                                Log.d("GPSDebug", "onLocationAvailability: isLocationAvailable=${availability.isLocationAvailable}")
+                                Log.d("GPSDebug", "isLocationAvailable=${availability.isLocationAvailable}")
                             }
                         }
-
-                        fusedLocationClient.requestLocationUpdates(request, callback, context.mainLooper)
+                        fusedLocationClient.requestLocationUpdates(request, cb, context.mainLooper)
                             .addOnFailureListener { e ->
                                 Log.e("GPSDebug", "requestLocationUpdates registration FAILED: ${e.javaClass.simpleName} - ${e.message}", e)
                             }
-
-                        cont.invokeOnCancellation {
-                            fusedLocationClient.removeLocationUpdates(callback)
-                        }
+                        callback = cb
                     }
                 }
-
-                if (location != null && location.accuracy <= 50f) {
-                    val movedMeters = if (lastLat != null && lastLng != null) {
-                        calculateDistanceInKm(lastLat!!, lastLng!!, location.latitude, location.longitude) * 1000
-                    } else Double.MAX_VALUE
-
-                    val markerMoved = !hasFirstFix || movedMeters >= moveThresholdMeters
-
-                    if (markerMoved) {
-                        lastLat = location.latitude
-                        lastLng = location.longitude
-                        onPickupLatLng(location.latitude, location.longitude)
-                        sharedPrefs.edit()
-                            .putFloat("saved_pickup_lat", location.latitude.toFloat())
-                            .putFloat("saved_pickup_lng", location.longitude.toFloat())
-                            .apply()
-                        onReverseGeocode(location.latitude, location.longitude)
-
-                        try {
-                            cameraPositionState.animate(
-                                CameraUpdateFactory.newLatLngZoom(LatLng(location.latitude, location.longitude), 15f)
-                            )
-                        } catch (e: Exception) {
-                            Log.e("CustomerApp", "Camera animate failed, ignoring", e)
-                        }
-                    }
-
-                    hasFirstFix = true
-                    onGpsReadyChanged(true)
-                    onFixTimestampUpdated(System.currentTimeMillis())
-                    onStatusMessage("Location lock Ready for booking. Long-press map to pin destination!")
-
-                    attempt = 0
-                    delayMs = 2000L
-                    delay(15000L)
-                    continue
-                } else if (location != null) {
-                    Log.d("CustomerApp", "Rejected low-accuracy fix: ${location.accuracy}m")
-                }
-            } catch (e: TimeoutCancellationException) {
-                //
+                delay(3000L)
             }
-
-
-            if (!hasFirstFix) {
-                attempt++
-                if (attempt < maxAttempts) {
-                    onStatusMessage("Locating you... (Tap this to try again)")
-                    delay(delayMs)
-                    delayMs = (delayMs * 1.8).toLong().coerceAtMost(30000L)
-                } else {
-                    onStatusMessage("Please Check your Internet Connection. Tap this to try again.")
-                    onGpsReadyChanged(false)
-                    return@launch
-                }
-            } else {
-                if (attempt == 0) {
-                    onStatusMessage("Reacquiring location (slow connection)... Tap to retry.")
-                }
-                attempt++
-                delay(5000L)
-            }
+        } finally {
+            callback?.let { fusedLocationClient.removeLocationUpdates(it) }
         }
     }
-
-
-
 }
 
 suspend fun fetchDriverDetails(
@@ -332,7 +334,7 @@ fun smartSnapDropoff(
                             pickupLat, pickupLng, snappedLat, snappedLng,
                             bookingStatus, activeBookingId, scope, sharedPrefs, onTripUpdate
                         )
-                        onStatusMessage("📍 Snapped to: $displayName")
+                        onStatusMessage("📍 Drop-off to: $displayName")
                     }
                     return@launch
                 }
@@ -386,6 +388,35 @@ fun smartSnapDropoff(
     onJobCreated(job)
 }
 
+suspend fun resolvePlaceGeometry(
+    placeId: String,
+    mapsApiKey: String
+): Pair<Double, Double>? = withContext(Dispatchers.IO) {
+    try {
+        val detailsUrl = "https://maps.googleapis.com/maps/api/place/details/json" +
+                "?place_id=$placeId&fields=geometry&key=$mapsApiKey"
+        val detailsConnection = URL(detailsUrl).openConnection() as HttpURLConnection
+        detailsConnection.connectTimeout = 5000
+        detailsConnection.readTimeout = 5000
+
+        if (detailsConnection.responseCode == 200) {
+            val detailsResponse = detailsConnection.inputStream.bufferedReader().use { it.readText() }
+            val location = JSONObject(detailsResponse)
+                .optJSONObject("result")
+                ?.optJSONObject("geometry")
+                ?.optJSONObject("location")
+
+            if (location != null) {
+                return@withContext location.getDouble("lat") to location.getDouble("lng")
+            }
+        }
+        null
+    } catch (e: Exception) {
+        Log.e("CustomerApp", "Place details fetch failed for $placeId", e)
+        null
+    }
+}
+
 fun searchDestination(
     query: String,
     mapsApiKey: String,
@@ -403,7 +434,7 @@ fun searchDestination(
         try {
             val encodedQuery = java.net.URLEncoder.encode(cleanQuery, "UTF-8")
             val urlString = "https://maps.googleapis.com/maps/api/place/autocomplete/json" +
-                    "?input=$encodedQuery&location=7.8275,123.420&radius=9000&strictbounds=true&key=$mapsApiKey"
+                    "?input=$encodedQuery&location=7.830,123.420&radius=7500&strictbounds=true&key=$mapsApiKey"
             val connection = URL(urlString).openConnection() as HttpURLConnection
             connection.connectTimeout = 6000
             connection.readTimeout = 6000
@@ -412,43 +443,18 @@ fun searchDestination(
                 val response = connection.inputStream.bufferedReader().use { it.readText() }
                 val json = JSONObject(response)
                 val predictions = json.optJSONArray("predictions") ?: JSONArray()
-                val loaded = mutableListOf<PlaceSuggestion>()
 
-                for (i in 0 until predictions.length()) {
-                    val prediction = predictions.getJSONObject(i)
-                    val placeId = prediction.optString("place_id", "")
-                    val description = prediction.optString("description", "").trim()
-                    if (placeId.isEmpty() || description.isEmpty()) continue
-
-                    try {
-                        val detailsUrl = "https://maps.googleapis.com/maps/api/place/details/json" +
-                                "?place_id=$placeId&fields=geometry&key=$mapsApiKey"
-                        val detailsConnection = URL(detailsUrl).openConnection() as HttpURLConnection
-                        detailsConnection.connectTimeout = 5000
-                        detailsConnection.readTimeout = 5000
-
-                        if (detailsConnection.responseCode == 200) {
-                            val detailsResponse = detailsConnection.inputStream.bufferedReader().use { it.readText() }
-                            val location = JSONObject(detailsResponse)
-                                .optJSONObject("result")
-                                ?.optJSONObject("geometry")
-                                ?.optJSONObject("location")
-
-                            if (location != null) {
-                                val plLat = location.getDouble("lat")
-                                val plLng = location.getDouble("lng")
-                                if (plLat in 7.800..7.860 && plLng in 123.360..123.480) {
-                                    loaded.add(PlaceSuggestion(description, plLat, plLng))
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.e("CustomerApp", "Place details fetch failed for $placeId", e)
-                        continue
+                val loaded = (0 until predictions.length())
+                    .map { predictions.getJSONObject(it) }
+                    .mapNotNull { prediction ->
+                        val placeId = prediction.optString("place_id", "")
+                        val description = prediction.optString("description", "").trim()
+                        if (placeId.isEmpty() || description.isEmpty()) null
+                        else PlaceSuggestion(displayName = description, placeId = placeId)
                     }
-                }
+                    .take(5)
 
-                withContext(Dispatchers.Main) { onSuggestions(loaded.take(5)) }
+                withContext(Dispatchers.Main) { onSuggestions(loaded) }
             }
         } catch (e: Exception) {
             Log.e("CustomerApp", "Search failed", e)

@@ -23,9 +23,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.cassey.customerapp.data.SupabaseClient
 import com.cassey.customerapp.network.NetworkQuality
-import com.cassey.customerapp.network.NetworkStatusIndicator
 import com.cassey.customerapp.network.NetworkTypeObserver
 import com.google.android.gms.location.LocationServices
+import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.CameraPositionState
@@ -34,6 +34,10 @@ import com.google.android.gms.maps.model.CameraPosition
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 import kotlinx.coroutines.*
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 
 @RequiresApi(Build.VERSION_CODES.O)
 @OptIn(ExperimentalMaterial3Api::class)
@@ -61,7 +65,11 @@ fun HomeScreen() {
     }
 
     val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(LatLng(7.8275, 123.420), 13f)
+        position = if (state.dropoffLat != 0.0 && state.dropoffLng != 0.0) {
+            CameraPosition.fromLatLngZoom(LatLng(state.dropoffLat, state.dropoffLng), 22f)
+        } else {
+            CameraPosition.fromLatLngZoom(PagadianDefaults.CAMERA_CENTER, PagadianDefaults.CAMERA_ZOOM)
+        }
     }
 
     // Color
@@ -88,7 +96,8 @@ fun HomeScreen() {
             sharedPrefs = sharedPrefs,
             context = context,
             cameraPositionState = cameraPositionState,
-            onStatusMessage = { state.statusMessage = it },
+            shouldAnimateCameraToPickup = { !state.hasDestinationStatus },
+            onStatusMessage = { if (!state.hasDestinationStatus) state.statusMessage = it },
             onPickupLatLng = { lat, lng -> state.pickupLat = lat; state.pickupLng = lng },
             onReverseGeocode = ::doReverseGeocode,
             onGpsReadyChanged = { state.isPickupGpsReady = it },
@@ -132,8 +141,53 @@ fun HomeScreen() {
                 state.tripDistance = distance
                 state.estimatedFare = fare
             },
-            onStatusMessage = { state.statusMessage = it }
+            onStatusMessage = {
+                state.hasDestinationStatus = true
+                state.statusMessage = it
+            }
         )
+    }
+
+    fun doSelectSuggestion(suggestion: PlaceSuggestion) {
+        state.dropoffInput = suggestion.displayName
+        state.suggestions = emptyList()
+        state.hasDestinationStatus = true
+        state.statusMessage = "Locating ${suggestion.displayName}..."
+
+        scope.launch {
+            val resolved = resolvePlaceGeometry(suggestion.placeId, com.cassey.customerapp.BuildConfig.MAPS_API_KEY)
+            if (resolved == null) {
+                state.statusMessage = "Couldn't locate that destination. Please try again."
+                return@launch
+            }
+
+            val (lat, lng) = resolved
+            val inBounds = lat in 7.800..7.860 && lng in 123.360..123.480
+            if (!inBounds) {
+                state.statusMessage = "⚠️ That destination is outside our service area (Pagadian City)."
+                state.dropoffInput = ""
+                Toast.makeText(context, "That destination is outside Pagadian City.", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+
+            state.dropoffLat = lat
+            state.dropoffLng = lng
+            state.selectedDropoffAddress = suggestion.displayName
+            sharedPrefs.edit()
+                .putFloat("saved_dropoff_lat", lat.toFloat())
+                .putFloat("saved_dropoff_lng", lng.toFloat())
+                .putString("saved_dropoff_address", suggestion.displayName)
+                .apply()
+            doUpdateTripDetails(state.pickupLat, state.pickupLng, lat, lng)
+            try {
+                cameraPositionState.animate(
+                    CameraUpdateFactory.newLatLngZoom(LatLng(lat, lng), 22f)
+                )
+            } catch (e: Exception) {
+                Log.e("CustomerApp", "Camera animate failed, ignoring", e)
+            }
+            state.statusMessage = "📍 Drop-off to: ${suggestion.displayName}"
+        }
     }
 
     fun doSearchDestination(query: String) {
@@ -251,38 +305,55 @@ fun HomeScreen() {
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(text = "Ride&Go", fontWeight = FontWeight.Bold, color = Color.White) },
-                actions = {
-                    IconButton(
-                        onClick = {
-                            if (state.termsRecord != null) {
-                                state.isTermsReviewMode = true
-                                state.showTermsDialog = true
-                            } else {
-                                Toast.makeText(context, "Terms of Service unavailable right now.", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = "View Terms of Service",
-                            tint = Color.White
+            Column {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = "Ride&Go",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
                         )
-                    }
-                    TextButton(
-                        onClick = {
-                            scope.launch {
-                                try { SupabaseClient.client.auth.signOut() }
-                                catch (e: Exception) { Log.e("RideGoAuth", "Logout failed", e) }
+                    },
+                    actions = {
+                        IconButton(
+                            onClick = {
+                                if (state.termsRecord != null) {
+                                    state.isTermsReviewMode = true
+                                    state.showTermsDialog = true
+                                } else {
+                                    Toast.makeText(context, "Terms of Service unavailable right now.", Toast.LENGTH_SHORT).show()
+                                }
                             }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = "View Terms of Service",
+                                tint = slate400
+                            )
                         }
-                    ) {
-                        Text(text = "Log Out", color = Color.White, fontWeight = FontWeight.SemiBold)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF00B14F))
-            )
+                        IconButton(
+                            onClick = {
+                                scope.launch {
+                                    try { SupabaseClient.client.auth.signOut() }
+                                    catch (e: Exception) { Log.e("RideGoAuth", "Logout failed", e) }
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ExitToApp,
+                                contentDescription = "Log Out",
+                                tint = slate400
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = slate900,
+                        titleContentColor = Color.White
+                    )
+                )
+                HorizontalDivider(color = slate800, thickness = 1.dp)
+            }
         }
     ) { innerPadding ->
         Box(
@@ -310,6 +381,7 @@ fun HomeScreen() {
                         if (state.activeBookingId != null) return@HomeMap
                         state.dropoffLat = point.latitude
                         state.dropoffLng = point.longitude
+                        state.hasDestinationStatus = true
                         state.statusMessage = "🔍 Finding nearest place..."
                         doSmartSnap(point.latitude, point.longitude)
                     } else {
@@ -317,19 +389,6 @@ fun HomeScreen() {
                     }
                 }
             )
-
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(12.dp)
-                    .background(
-                        color = Color.Black.copy(alpha = 0.6f),
-                        shape = RoundedCornerShape(20.dp)
-                    )
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                NetworkStatusIndicator()
-            }
 
             if (state.isDashboardVisible) {
                 HomeDashboard(
@@ -351,6 +410,7 @@ fun HomeScreen() {
                     onClearBooking = ::doClearBooking,
                     onFetchGPS = ::doFetchGPS,
                     onSearchDestination = ::doSearchDestination,
+                    onSelectSuggestion = ::doSelectSuggestion,
                     onUpdateTripDetails = ::doUpdateTripDetails,
                     onHideDashboard = { state.isDashboardVisible = false },
                     onConfirmBooking = ::doConfirmBooking

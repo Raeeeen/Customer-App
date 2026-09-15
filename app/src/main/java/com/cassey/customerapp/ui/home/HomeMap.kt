@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.*
@@ -48,7 +49,8 @@ fun HomeMap(
             Marker(
                 state = pickupMarkerState,
                 title = "Your Pickup Location",
-                snippet = pickupAddress
+                snippet = pickupAddress,
+                icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN)
             )
         }
 
@@ -61,7 +63,8 @@ fun HomeMap(
             Marker(
                 state = dropoffMarkerState,
                 title = "Dropoff Destination",
-                snippet = selectedDropoffAddress
+                snippet = selectedDropoffAddress,
+                icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED)
             )
         }
 
@@ -79,7 +82,11 @@ fun HomeMap(
         if (activeBookingId == null) {
             nearbyRiders.forEach { rider ->
                 val nearbyMarkerState = rememberMarkerState(position = LatLng(rider.lat, rider.lng))
-                Marker(state = nearbyMarkerState, title = "Nearby Rider")
+                Marker(
+                    state = nearbyMarkerState,
+                    title = "Nearby Rider",
+                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE)
+                )
             }
 
             if (pickupLat != 0.0 && pickupLng != 0.0) {

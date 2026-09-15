@@ -22,6 +22,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.withTimeout
 import io.github.jan.supabase.postgrest.from
+import android.widget.Toast
 
 @Composable
 fun NetworkTypeObserver() {
@@ -116,5 +117,25 @@ fun NetworkTypeObserver() {
             resumeScope.cancel()
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
+    }
+
+    DisposableEffect(Unit) {
+        val qualityScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        var lastNotified: ConnectionQuality? = null
+
+        qualityScope.launch {
+            NetworkQuality.quality.collect { q ->
+                if (q == ConnectionQuality.VERY_SLOW && lastNotified != ConnectionQuality.VERY_SLOW) {
+                    Toast.makeText(
+                        context,
+                        "Your internet is very slow.\nSome actions may fail.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                lastNotified = q
+            }
+        }
+
+        onDispose { qualityScope.cancel() }
     }
 }
