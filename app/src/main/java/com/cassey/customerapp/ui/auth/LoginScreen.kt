@@ -41,6 +41,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import com.cassey.customerapp.ui.navigation.PasswordResetFlag
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 @Serializable
 data class Profile(
@@ -59,7 +61,9 @@ private fun getFriendlyErrorMessage(rawError: String): String {
         lower.contains("network") || lower.contains("timeout") -> "Connection issue. Check your internet."
         lower.contains("rate limit") || lower.contains("too many requests") -> "Too many attempts. Try again later."
         lower.contains("bad request") || lower.contains("format") -> "Please check your phone number format."
-        else -> "An authentication anomaly occurred. Please retry."
+        lower.contains("token") && (lower.contains("invalid") || lower.contains("expired")) -> "Incorrect or expired code. Try again or resend."
+        lower.contains("sms_send_failed") || lower.contains("unverified") -> "We couldn't send a code to this number. Please try again later."
+        else -> "An authentication error occurred. Please retry."
     }
 }
 
@@ -77,6 +81,7 @@ fun LoginScreen(
     var name by remember { mutableStateOf("") }
     var otp by remember { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
+    var info by remember { mutableStateOf<String?>(null) }
     val formattedPhone = phone.filter { it.isDigit() }.let {
         when {
             it.startsWith("0") -> "+63${it.drop(1)}"
@@ -211,6 +216,7 @@ fun LoginScreen(
                             IconButton(
                                 onClick = {
                                     error = null
+                                    info = null
                                     step = "PHONE"
                                     otp = ""
                                     newPassword = ""
@@ -227,6 +233,11 @@ fun LoginScreen(
                                 )
                             }
                         }
+                    }
+
+                    info?.let {
+                        Text(it, color = Color(0xFF166534), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(modifier = Modifier.height(12.dp))
                     }
 
                     error?.let { rawErrorString ->
@@ -531,6 +542,7 @@ fun LoginScreen(
                                 onValueChange = {
                                     otp = it.filter { digit -> digit.isDigit() }
                                     if (error != null) error = null
+                                    info = null
                                 },
                                 label = { Text("6-Digit Code") },
                                 singleLine = true,
@@ -588,7 +600,7 @@ fun LoginScreen(
                                             SupabaseClient.client.auth.signInWith(OTP) {
                                                 this.phone = formattedPhone
                                             }
-                                            error = "Verification code resent."
+                                            info = "Verification code resent."
                                         } catch (e: Exception) {
                                             error = e.message
                                         } finally {
@@ -613,6 +625,7 @@ fun LoginScreen(
                                 onValueChange = {
                                     otp = it.filter { digit -> digit.isDigit() }
                                     if (error != null) error = null
+                                    info = null
                                 },
                                 label = { Text("6-Digit Code") },
                                 singleLine = true,
@@ -637,19 +650,22 @@ fun LoginScreen(
                                     scope.launch {
                                         loading = true
                                         error = null
+                                        info = null
                                         try {
-                                            SupabaseClient.client.auth.verifyPhoneOtp(
-                                                type = OtpType.Phone.SMS,
-                                                phone = formattedPhone,
-                                                token = otp
-                                            )
-                                            handleDatabaseAndFinish(
-                                                name = name,
-                                                formattedPhone = formattedPhone,
-                                                deviceId = deviceId,
-                                                onLoginSuccess = onLoginSuccess,
-                                                onError = { msg -> error = msg }
-                                            )
+                                            withContext(NonCancellable) {
+                                                SupabaseClient.client.auth.verifyPhoneOtp(
+                                                    type = OtpType.Phone.SMS,
+                                                    phone = formattedPhone,
+                                                    token = otp
+                                                )
+                                                handleDatabaseAndFinish(
+                                                    name = name,
+                                                    formattedPhone = formattedPhone,
+                                                    deviceId = deviceId,
+                                                    onLoginSuccess = onLoginSuccess,
+                                                    onError = { msg -> error = msg }
+                                                )
+                                            }
                                         } catch (e: Exception) {
                                             error = e.message
                                         } finally {
@@ -670,7 +686,8 @@ fun LoginScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 onClick = {
                                     loading = true
-                                    sendSupabaseOtp { error = "Verification code resent." }
+                                    error = null
+                                    sendSupabaseOtp { info = "Verification code resent." }
                                 }
                             ) {
                                 Text("Resend Verification Code", color = Color(0xFF00B14F), fontWeight = FontWeight.Bold)
